@@ -1543,6 +1543,7 @@ function AddAlphaPlane42(clip C, clip A, bool "silent")
 ## version 2017-05-16 dither option; bugfixes after more thorough testing
 ## version 2017-05-22 16-bit 444 not displaying, so falling back to 422
 ## version 2018-03-10 for VirtualDub2 v19.0 (greatly improved YUV support)
+## version 2018-03-13 revert
 ##
 function ToVdubFM(clip C, bool "dither")
 {
@@ -1579,6 +1580,23 @@ function ToVdubFM(clip C, bool "dither")
     \   : (dit8) ? C.ConvertBits42(8, dither=dith).ConvertToRGB24 
     \            : C.ConvertBits42(16)            .ConvertToRGB64 
     \                                          [* 16bit: ConvertToRGB48 ng *]
+    \ : (C.Is444) 
+    \   ? (bits==8)  ? CY                          .ConvertToYV24
+    \   : (bits==16) ? CY                          .ConvertToYUV444
+    \   : (dit8) ? CY.ConvertBits42(8, dither=dith).ConvertToYV24 
+    \            : CY.ConvertBits42(16)            .ConvertToYUV444 
+    \                                          [* 16bit: ConvertToYUV444 ng ???? *]  
+    \ : (C.Is422)
+    \   ? (bits==8)  ? CY                          .ConvertToYUY2
+    \   : (bits==10) ? CY                          .ConvertToYUV422
+    \   : (dit8) ? CY.ConvertBits42(8, dither=dith).ConvertToYUY2 
+    \            : CY.ConvertBits42(16)            .ConvertToYUV422  
+    \ : (C.Is420) 
+    \   ? (bits==8)  ? CY                          .ConvertToYV12
+    \   : (bits==10) ? CY                          .ConvertToYUV420
+    \   : (dit8) ? CY.ConvertBits42(8, dither=dith).ConvertToYV12 
+    \            : CY.ConvertBits42(16)            .ConvertToYUV420 
+    \                                          [* 16bit: ConvertToYUV420 ng *]
     \ : (C.IsY)
     \   ? (bits==8)  ? C                           .ConvertToY8
     \   : (bits==10) ? C                           .ConvertToYUV422
@@ -2520,6 +2538,7 @@ function CropLTRB(clip C, int left, int top, int right, int bottom,
 ### alias for [[#Cropd]] with argument order: Left, Top, Width, Height
 ##
 ## @ left, top, width, height, align - cf. [[Crop]]
+##    (0 width or height means keep source dimension)
 ## @ mod - adjusts crop to modulo 'mod'; default 2
 ## @ minwidth, minheight - resulting clip will be at least this size;
 ##         default 0 (invalid crop values may raise errors)
@@ -2534,8 +2553,8 @@ function CropLTWH(clip C, int left, int top, int width, int height,
 
     L  = Min(Max(0, left),    C.Width-mx)
     T  = Min(Max(0, top),     C.Height-my)
-    W  = Min(Max(mx, width),  C.Width-L)
-    H  = Min(Max(my, height), C.Height-T)
+    W  = (width==0)  ? (C.Width-L)  : Min(Max(mx, width),  C.Width-L)
+    H  = (height==0) ? (C.Height-T) : Min(Max(my, height), C.Height-T)
 
     return C.Cropd(L, T, W, H, align, mod)
 #    return C.Cropd(L, T, W, H, align, mod)
@@ -3774,6 +3793,8 @@ function vector_labels(clip T, int "bits", bool "colors")
 ##
 function HistogramTurn(clip C, bool "parade", bool "shrink", bool "bottom")
 {
+    Assert(C.Height>=260,
+    \   "HistogramTurn: source clip minimum height = 260")
     parade  = Default(parade, true)
     shrink  = Default(shrink, false)
     bottom  = Default(bottom, false)
@@ -3804,6 +3825,8 @@ function HistogramTurn(clip C, bool "parade", bool "shrink", bool "bottom")
 function ScopeR(clip C, bool "shrink", bool "vector", string "matrix", 
 \                 bool "parade", bool "bottom", bool "labels")
 {
+    Assert(C.Height>=260,
+    \   "ScopeR: source clip minimum height = 260")
     shrink  = Default(shrink, false)
     vector  = Default(vector, false)
     matrix  = Default(matrix, "Rec709")
@@ -3971,6 +3994,8 @@ function ScopeY(clip C, bool "shrink", bool "vector", bool "levels", bool "botto
     \   "ScopeY: source must be YUV(A)")
     Assert(!C.IsYV411 || !levels, 
     \  "ScopeY: YV411 not accepted with 'levels argument")
+    Assert(C.Height>=260,
+    \   "ScopeY: source clip minimum height = 260")
     
     shrink = Default(shrink, false)
     vector = Default(vector, true)
@@ -4060,6 +4085,8 @@ function AnalyzeFmt(clip C, int "left", int "top", int "width", int "height",
 \                   int "text_color", int "halo_color", float "fontsize", 
 \                   bool "chroffset", bool "draftmode")
 {
+    Assert(C.Height>=260,
+    \   "AnalyzeFmt: source clip minimum height = 260")
     minwinx = 8
     minwiny = 8
     Lw = Default(left,   -1)
