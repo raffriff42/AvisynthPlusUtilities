@@ -44,6 +44,7 @@
 ## v2018-02-27 ShowSnippet; ColorRamp replaces ColorRampR/ColorRampY
 ## v2018-03-01 bugixes; removed obsolete workarounds (AVS+ r2632); 
 ##              ToRGB/ToYUV 'alpha' defaults; move filters in MISC to DIAGNOSTIC
+## v2018-03-09 rename Levelsc -> Levelss; drop LevelsPlus
 
 global R41_HISTX = 264 ## amount classic Histogram adds to clip width (with added borders)
 global R41_BITMAX = 16 ## max implicit bit depth (float temp. disabled pending more tests)
@@ -130,13 +131,13 @@ global R41_BITMAX = 16 ## max implicit bit depth (float temp. disabled pending m
     #@ function _scff(int fs_in, int fs_out, float f, bool "cx")
 
     ### scale a value from one bit depth to another
-    #@ function _scbf(int bits_in, int bits_out, float f, bool "cx")
+    #@ function scbf(int bits_in, int bits_out, float f, bool "cx")
 
     ### scale a value from one bit depth to another; clamp output
-    #@ function _scbx(int bits_in, int bits_out, float f)
+    #@ function scbx(int bits_in, int bits_out, float f)
 
     ### scale a value from one bit depth to another; string result 
-    #@ function _scbs(int bits_in, int bits_out, float f, int "decimals")
+    #@ function scbs(int bits_in, int bits_out, float f, int "decimals")
 
     ### scale an 8-bit value for target clip 'T'
     #@ function sc8f(clip T, float f, bool "cx")
@@ -240,19 +241,13 @@ global R41_BITMAX = 16 ## max implicit bit depth (float temp. disabled pending m
 ### COLOR AND OVERLAY FILTERS
 
     ### scale 0-255 [[Levels]] arguments to current bit depth
-    #@ function Levelsc(clip C, 
+    #@ function Levelss(clip C, 
     ##\            float input_low, float gamma, float input_high,
     ##\            float output_low, float output_high, bool "coring", 
     ##\            bool "dither", bool "chroma")
 
-    ### scale 0-255 [[Levels]] arguments to current bit depth (deprecated; use [[#Levelsc]])
-    #@ function LevelsPlus(clip C, 
-    ##\               float input_low, float gamma, float input_high,
-    ##\               float output_low, float output_high, bool "coring", 
-    ##\               bool "dither", bool "chroma")
-
-    ### call [[#Levelsc]] independently for red, green, blue
-    #@ function LevelscRGB(clip C,  
+    ### call [[#Levelss]] independently for red, green, blue
+    #@ function LevelssRGB(clip C,  
     ##\              string "RLevels", string "GLevels", string "BLevels",  
     ##\              float "defBlk", float "defWht", bool "coring", bool "dither")
 
@@ -861,7 +856,7 @@ function _scff(int fs_in, int fs_out, float f, bool "cx")
     return fr
 }
 
-## ('_scbf' short for 'SCale with Bits param, Float result') 
+## ('scbf' short for 'SCale with Bits param, Float result') 
 #######################################
 ### scale a value from one bit depth to another
 ##
@@ -871,7 +866,7 @@ function _scff(int fs_in, int fs_out, float f, bool "cx")
 ## @ returns float if not clamped; 
 ##   else returns int for int formats, float for float
 ##
-function _scbf(int bits_in, int bits_out, float f, bool "cx")
+function scbf(int bits_in, int bits_out, float f, bool "cx")
 {
     return _scff(_getFullscale(bits_in), _getFullscale(bits_out), f, cx)
 }
@@ -882,9 +877,9 @@ function _scbf(int bits_in, int bits_out, float f, bool "cx")
 ## @ bits_out - the bit depth being converted to
 ## @ returns int for int formats, float for float
 ##
-function _scbx(int bits_in, int bits_out, float f)
+function scbx(int bits_in, int bits_out, float f)
 {
-    return _scbf(bits_in, bits_out, f, true)
+    return scbf(bits_in, bits_out, f, true)
 }
 #######################################
 ### scale a value from one bit depth to another; string result 
@@ -893,10 +888,10 @@ function _scbx(int bits_in, int bits_out, float f)
 ## @ bits_out - the bit depth being converted to
 ## @ returns String, unclamped
 ##
-function _scbs(int bits_in, int bits_out, float f, int "decimals")
+function scbs(int bits_in, int bits_out, float f, int "decimals")
 {
     decimals = Min(Max(0, Default(decimals, 4)), 8)
-    return String(_scbf(bits_in, bits_out, f), "%0."+String(decimals)+"f") 
+    return String(scbf(bits_in, bits_out, f), "%0."+String(decimals)+"f") 
 }
 
 #######################################
@@ -909,7 +904,7 @@ function _scbs(int bits_in, int bits_out, float f, int "decimals")
 ##
 function sc8f(clip T, float f, bool "cx")
 {
-    return _scbf(8, T.BitsPerComponent, f, cx)
+    return scbf(8, T.BitsPerComponent, f, cx)
 } 
 #######################################
 ### scale an 8-bit value for target clip 'T'; clamp output
@@ -919,7 +914,7 @@ function sc8f(clip T, float f, bool "cx")
 ##
 function sc8x(clip T, float f)
 {
-    return _scbf(8, T.BitsPerComponent, f, true)
+    return scbf(8, T.BitsPerComponent, f, true)
 } 
 #######################################
 ### scale an 8-bit value for target clip 'T'; string result
@@ -928,7 +923,7 @@ function sc8x(clip T, float f)
 ##
 function sc8s(clip T, float f, int "decimals")
 {
-    return _scbs(8, T.BitsPerComponent, f, decimals)
+    return scbs(8, T.BitsPerComponent, f, decimals)
 } 
 
 #######################################################################################
@@ -1421,8 +1416,8 @@ function ToStack16(clip C, bool "swap_planes")
 ##  (all major color formats supported, but only RGB requires special handling)
 ##
 ## @ T - template clip for restoring original color format;
-##       Note: alpha data is copied from 'T' if present
-##       (implies other clip properties must be compatible)
+##       Note: alpha data is copied from 'T' if present and possible
+##       (if any other clip properties not compatible, alpha is ignored)
 ## @ swap_planes - use whatever you used in ToStack16
 ##
 function FromStack16(clip C, clip T, bool "swap_planes")
@@ -1436,14 +1431,15 @@ function FromStack16(clip C, clip T, bool "swap_planes")
     ConvertFromStacked
 
     (T.IsRGB)
-    \ ? (swp)   ? YUV2GBR : MatchColorFormat(T) 
+    \ ? (swp)   ? YUV2GBR.MatchColorFormat(T)
+    \           : Last.MatchColorFormat(T) 
     \ : T.Is444 ? Last
     \ : T.Is422 ? Last
     \ : Is420   ? Last
     \ : T.IsY   ? Last
-    \ : To420
+    \ : MatchColorFormat(T)
     (T.HasAlpha)
-    \ ? AddAlphaPlane42(T)
+    \ ? AddAlphaPlane42(T, silent=1>0)
     \ : Last
     return Last
 } 
@@ -1525,7 +1521,7 @@ function AddAlphaPlane42(clip C, clip A, bool "silent")
 }
 
 ##################################
-### make changes needed to display on vdubFM (VirtualDub FilterMod)
+### make changes needed to display on vdubFM (VirtualDub2, fka FilterMod)
 ##  [https://sourceforge.net/projects/vdfiltermod/]
 ##
 ## @ dither - if true, reduce bit depth to 8 bit with dithering if applicable;
@@ -1546,6 +1542,7 @@ function AddAlphaPlane42(clip C, clip A, bool "silent")
 ## version 2017-04-29 raffriff42
 ## version 2017-05-16 dither option; bugfixes after more thorough testing
 ## version 2017-05-22 16-bit 444 not displaying, so falling back to 422
+## version 2018-03-10 for VirtualDub2 v19.0 (greatly improved YUV support)
 ##
 function ToVdubFM(clip C, bool "dither")
 {
@@ -1582,23 +1579,6 @@ function ToVdubFM(clip C, bool "dither")
     \   : (dit8) ? C.ConvertBits42(8, dither=dith).ConvertToRGB24 
     \            : C.ConvertBits42(16)            .ConvertToRGB64 
     \                                          [* 16bit: ConvertToRGB48 ng *]
-    \ : (C.Is444) 
-    \   ? (bits==8)  ? CY                          .ConvertToYV24
-    \   : (bits==16) ? CY                          .ConvertToYUV422
-    \   : (dit8) ? CY.ConvertBits42(8, dither=dith).ConvertToYV24 
-    \            : CY.ConvertBits42(16)            .ConvertToYUV422 
-    \                                          [* 16bit: ConvertToYUV444 ng ???? *]  
-    \ : (C.Is422)
-    \   ? (bits==8)  ? CY                          .ConvertToYUY2
-    \   : (bits==10) ? CY                          .ConvertToYUV422
-    \   : (dit8) ? CY.ConvertBits42(8, dither=dith).ConvertToYUY2 
-    \            : CY.ConvertBits42(16)            .ConvertToYUV422  
-    \ : (C.Is420) 
-    \   ? (bits==8)  ? CY                          .ConvertToYV12
-    \   : (bits==10) ? CY                          .ConvertToYUV422
-    \   : (dit8) ? CY.ConvertBits42(8, dither=dith).ConvertToYV12 
-    \            : CY.ConvertBits42(16)            .ConvertToYUV422 
-    \                                          [* 16bit: ConvertToYUV420 ng *]
     \ : (C.IsY)
     \   ? (bits==8)  ? C                           .ConvertToY8
     \   : (bits==10) ? C                           .ConvertToYUV422
@@ -2168,7 +2148,7 @@ function ConvertBits42(clip C, int bits, int "dither", bool "nobias")
         biti = C.BitsPerComponent
         IsFP = (biti==32)
         f    = 0.48
-        n    = _scbf(bito, biti, f) - 1.0 
+        n    = scbf(bito, biti, f) - 1.0 
 
         R  = (IsFP) ? C
         \  : (C.IsRGB)
@@ -2222,13 +2202,12 @@ function IsInterleaved42(clip C)
 
 ##################################
 ### scale 0-255 [[Levels]] arguments to current bit depth
-## (successor to LevelPlus)
 ##
 ## @ input_x, output_x - now Float to allow fractional values
 ## @ coring   - default true, like 'legacy' Levels
 ## @ chroma   - if true (default), process chroma like Levels; else bypass YUV chroma
 ##
-function Levelsc(clip C, 
+function Levelss(clip C, 
 \            float input_low, float gamma, float input_high,
 \            float output_low, float output_high, 
 \            bool "coring", bool "dither", bool "chroma")
@@ -2267,29 +2246,7 @@ function Levelsc(clip C,
 }
 
 ##################################
-### scale 0-255 [[Levels]] arguments to current bit depth (deprecated; use [[#Levelsc]])
-##
-## @ input_x, output_x - now Float to allow fractional values
-## @ coring   - unlike 'legacy' Levels, 'coring' defaults to false
-## @ chroma   - if true (default) process chroma like Levels; else bypass YUV chroma
-##
-function LevelsPlus(clip C, 
-\            float input_low, float gamma, float input_high,
-\            float output_low, float output_high, 
-\            bool "coring", bool "dither", bool "chroma")
-{
-    coring = Default(coring, false)
-    dither = Default(dither, false)
-    chroma = Default(chroma, true)
-
-    return Levelsc(C,
-    \          input_low, gamma, input_high, 
-    \          output_low, output_high,
-    \          coring, dither, chroma)
-}
-
-##################################
-### call [[#Levelsc]] independently for red, green, blue
+### call [[#Levelss]] independently for red, green, blue
 ##
 ## @ RLevels - the five main [[Levels]] arguments as a string, 
 ##             affecting the Red channel; default is "0, 1.0, 255, 0, 255"
@@ -2298,12 +2255,12 @@ function LevelsPlus(clip C,
 ## @ defBlk, defWht - replaces "0", "255" in all default levels strings
 ## @ coring, dither - cf. Levels
 ##
-function LevelscRGB(clip C,  
+function LevelssRGB(clip C,  
 \            string "RLevels", string "GLevels", string "BLevels",  
 \            float "defBlk", float "defWht", bool "coring", bool "dither")
 {
     Assert(C.IsRGB, 
-    \   "LevelscRGB: source must be RGB")
+    \   "LevelssRGB: source must be RGB")
     
     defBlk = Default(defBlk, 0)
     defWht = Default(defWht, 255)
@@ -2325,9 +2282,9 @@ function LevelscRGB(clip C,
     \         .ReplaceStr("$c", String(coring))
     \         .ReplaceStr("$d", String(dither))
 
-    R = Eval("ExtractR.Levelsc(" + RLevels + scommon + ")")
-    G = Eval("ExtractG.Levelsc(" + GLevels + scommon + ")")
-    B = Eval("ExtractB.Levelsc(" + BLevels + scommon + ")")
+    R = Eval("ExtractR.Levelss(" + RLevels + scommon + ")")
+    G = Eval("ExtractG.Levelss(" + GLevels + scommon + ")")
+    B = Eval("ExtractB.Levelss(" + BLevels + scommon + ")")
     
     CombinePlanes(R, G, B, "RGB", sample_clip=C)
     return Last
@@ -3313,6 +3270,8 @@ function ShowSnippet(clip "c", string "s", val "r",
 
     s = s.ReplaceStr(Chr(10), "\n").ReplaceStr(Chr(13), " ") 
 
+    ## TODO: optionally remove comments
+
     return IsClip(r) 
     \ ? r.Subtitle42(s, 
     \           font=font, size=size, text_color=text_color, 
@@ -3495,9 +3454,10 @@ function ColorRampEx(clip T, int "left_color", int "right_color", int "height",
     Trim(0, length=1).Loop(T.FrameCount)
 
     ## HACK "Last.Height" because "Height" is arg name
-    StackVertical(
-    \   Last.CropEx(TR.Width, Last.Height, mod=1), 
-    \   (inst) ? TR.CropLRTB(0, 0, hgt, 0) : TR
+    (!top) ? Last
+    \ : StackVertical(
+    \       Last.CropEx(TR.Width, Last.Height, mod=1), 
+    \       (inst) ? TR.CropLRTB(0, 0, hgt, 0) : TR
     \ ) 
     (side) ? TurnRight : Last
 
@@ -3538,6 +3498,8 @@ function Grayramp(clip T, int "height", bool "zigs", bool "ontop", bool "onside"
 ##
 function Vector2(clip C, string "matrix", bool "bottom", bool "labels", int "style", bool "audio")
 {
+    Assert(C.Height>=260,
+    \   "Vector2: source clip minimum height = 260")
     matrix = Default(matrix, "Rec601")    
     bottom = Default(bottom, false)
     labels = Default(labels, true)
@@ -3576,7 +3538,7 @@ function Vector2(clip C, string "matrix", bool "bottom", bool "labels", int "sty
         H = (B.Height<128) ? B 
         \  : B.Histogram("audiolevels")
         \     .CropEx(Width, C.Height-Height, align=8)
-        \     .Levelsc(0, 1.0, 255, 0, 130, chroma=1>0) 
+        \     .Levelss(0, 1.0, 255, 0, 130, chroma=1>0) 
         
         S = B.Histogram("StereoY8")
         \    .CropEx(H.Width, H.Height, align=5)
@@ -3871,11 +3833,11 @@ function ScopeR(clip C, bool "shrink", bool "vector", string "matrix",
     \ : (C.IsRGB) 
     \   ? C.KillAudio.ConvertBits42(8, dither=dth).TurnRight
     \      ._HistRGB(parade)
-    \      .LevelsPlus(24, 2.5, 235, 0, 255)
+    \      .Levelss(24, 2.5, 235, 0, 255, coring=false)
     \      .TurnLeft.ConvertBits42(bits).MatchColorFormat(C) 
     \   : C.KillAudio.ConvertBits42(8, dither=dth).TurnRight
     \      ._Hist2
-    \      .LevelsPlus(24, 2.5, 235, 0, 255)
+    \      .Levelss(24, 2.5, 235, 0, 255, coring=false)
     \      .TurnLeft.ConvertBits42(bits)
 
     R = (bottom) 
@@ -4147,7 +4109,7 @@ function AnalyzeFmt(clip C, int "left", int "top", int "width", int "height",
             \   : CropLTWH(analyzef_Lw, analyzef_Tw, analyzef_Ww, analyzef_Hw)
 
             (!bb) ? Last
-            \   : Levelsc(0, 1.0, 255, 48, 255-92, chroma=true)
+            \   : Levelss(0, 1.0, 255, 48, 255-92, chroma=true)
             \     .Overlay(CC, x=analyzef_Lw, y=analyzef_Tw)
 
             s =n+"average = " 
@@ -4221,7 +4183,7 @@ function AnalyzeFmt(clip C, int "left", int "top", int "width", int "height",
             \   : CropLTWH(analyzef_Lw, analyzef_Tw, analyzef_Ww, analyzef_Hw)
 
             (!bb) ? Last
-            \   : Levelsc(0, 1.0, 255, 48, 255-92, chroma=true)
+            \   : Levelss(0, 1.0, 255, 48, 255-92, chroma=true)
             \     .Overlay(CC, x=analyzef_Lw, y=analyzef_Tw)
 
             s =n+"average  = " 
