@@ -89,16 +89,6 @@ global giUUTrim = 0
 
 ### MERGE & OVERLAY FILTERS
 
-    ### compatibility wrapper: version 2C
-    #@ function SGradation2C(clip C, 
-    ##\               float "gammaWht", float "gammaBlk")
-
-    ### compatibility wrapper: version 2D
-    #@ function SGradation2D(clip C, 
-    ##\               float loBoost, float hiCut,
-    ##\               float "bluSat", float "yelSat",
-    ##\               float "redSat", float "grnSat", bool "tvrange")
-
     ### Enhanced [[SGradation]]; semi-independent control of highlights & lowlights
     #@ function SGradation3(clip C, 
     ##\               float "gammaWht", float "gammaBlk",
@@ -111,8 +101,13 @@ global giUUTrim = 0
     ### simple edge mask
     #@ function EdgeMask(clip C, int "threshold", float "blur")
 
-    ### merge 2 filters with edge mask
+    ### merge 2 clips with edge mask (deprecated)
     #@ function EdgeMerge(clip N, clip M, clip E, 
+    ##\               int "maskthr", float "maskblur",
+    ##\               float "strength", bool "showmask")
+
+    ### merge 2 clips with edge mask
+    #@ function EdgeMerge2(clip C, clip E, clip "M", 
     ##\               int "maskthr", float "maskblur",
     ##\               float "strength", bool "showmask")
 
@@ -135,8 +130,11 @@ global giUUTrim = 0
     ##\               clip "over", int "color",
     ##\               string "mode", float "opacity", float "maskblur")
 
-    ### merge Lo, Mid, Hi clips based on clip 'C' luma
-    #@ function MergeLMH(clip C, clip C_lo, clip C_mid, clip C_hi,
+    ### merge 'Lo', 'Hi' clips based on clip 'T' luma
+    #@ function MergeLH(clip T, clip Lo, clip Hi)
+
+    ### merge 'Lo', 'Mid', 'Hi' clips based on clip 'T' luma
+    #@ function MergeLMH(clip T, clip Lo, clip Mid, clip Hi,
     ##\               float "ctr_lo", float "ctr_hi", float "qfactor",
     ##\               bool "showmasks")
 
@@ -200,6 +198,15 @@ global giUUTrim = 0
     ##\               float "g", float "r",
     ##\               int "k")
 
+    ### simple gamma adjustment (more = brighter lowlights)
+    #@ function GammaCurve(clip C, float gamma, bool "tvrange")
+
+    ### simple 'anti-gamma' adjustment (more = darker highlights)
+    #@ function AntigammaCurve(clip C, float antigamma, bool "tvrange")
+
+    ### merge GammaCurve and AntigammaCurve
+    #@ function GammaScurve(clip C, float gamma, float antigamma, bool "tvrange")
+
     ### enhance contrast in lowlights (USM) & highlights (stretch)
     #@ function HighLowEnhancer(clip C, float "lowlights", float "highlights")
 
@@ -251,6 +258,9 @@ global giUUTrim = 0
 
     ### reduces chroma bleed somewhat
     #@ function ChromaWarpSharpener(clip C, int "strength", bool "yv24_ignored")
+
+    ### subtle sharpening effect
+    #@ function MultiSharpen(clip C, int multi, float "sharpen", float "blur")
 
 ### BORDER & CROP FILTERS
 
@@ -782,7 +792,7 @@ function UUInsertFade(clip A, clip B,
 ## BUGGY - use UUDissolve2
 #######################################
 ### dissolve to alternate clip
-## http://atlas.kennesaw.edu/~dhirschl/avisynth.html
+## http://web.archive.org/web/20120202132116/http://atlas.kennesaw.edu:80/~dhirschl/avisynth.html
 ##
 ## @ A     - main movie
 ## @ B     - angle 2 (synchronized with clip 'A')
@@ -1223,14 +1233,13 @@ function SGradation2D(clip C,
 ### Enhanced [[SGradation]]; semi-independent control of highlights & lowlights
 ## supports YUV, YUVA (A = passthrough), Y-only
 ##
-## @ gammaWht - if > 1, stretch upper midrange (darker highlights);  
-##              if < 1, squeeze upper midrange (darker highlights)
-## @ gammaBlk - if > 1, stretch lower midrange (darker lowlights);  
-##              if < 1, squeeze lower midrange (darker highlights)
+## @ gammaWht - if > 1, stretch upper midrange (squeeze highlights);  
+##              if < 1, squeeze upper midrange (stretch highlights)
+## @ gammaBlk - if > 1, stretch lower midrange (squeeze lowlights);  
+##              if < 1, squeeze lower midrange (stretch lowlights)
 ## * Values greater than 1 increase midrange contrast and "crush" the extremes; 
 ##   values less than 1 bring out detail at the extremes at the expense of the midrange. 
-## * It's best to keep the two values
-##   close to one another to avoid a glitch at midpoint.
+## * It's best to keep the two values close to one another to avoid a glitch at midpoint.
 ##
 ## @ bluSat, yelSat, redSat, grnSat (U+, U-, V+, V-)
 ##            - if > 1.0, increase color, especially at mid-saturation
@@ -1264,12 +1273,12 @@ function SGradation3(clip C,
 
     DK = (!Yproc) ? C
     \  : (tvrg) 
-    \     ? C.Levelsc( 16, 1/gBlk, 127, 16, 127, coring=false, chroma=false)
-    \     : C.Levelsc(  0, 1/gBlk, 127,  0, 127, coring=false, chroma=false)
+    \     ? C.Levelss( 16, 1/gBlk, 127, 16, 127, coring=false, chroma=false)
+    \     : C.Levelss(  0, 1/gBlk, 127,  0, 127, coring=false, chroma=false)
     LT = (!Yproc) ? C
     \  : (tvrg)  [* note inverted lo-hi inputs! *]
-    \     ? C.Levelsc(235, 1/gWht, 127, 108,  0, coring=false, chroma=false)
-    \     : C.Levelsc(255, 1/gWht, 127, 128,  0, coring=false, chroma=false)
+    \     ? C.Levelss(235, 1/gWht, 127, 108,  0, coring=false, chroma=false)
+    \     : C.Levelss(255, 1/gWht, 127, 128,  0, coring=false, chroma=false)
     Y  = (!Yproc) ? C
     \  : Overlay(DK, LT, mode="add")
 
@@ -1326,37 +1335,47 @@ function EdgeMask(clip C, int "threshold", float "blur")
 }
 
 ##################################
-### merge 2 filters with edge mask
+### merge 2 clips with edge mask (deprecated)
+function EdgeMerge(clip N, clip M, clip E, 
+\               int "maskthr", float "maskblur",
+\               float "strength", bool "showmask")
+{
+    return EdgeMerge2(N, E, M, maskthr, maskblur, strength, showmask)
+}
+
+# https://forum.doom9.org/showthread.php?p=1835903#post1835903
+##################################
+### merge 2 clips with edge mask
 ##
-## @ N        - source clip for non-edges
-## @ M        - source clip for calculating edge mask (default 'N')
-## @ E        - source clip for edges as determined by edge mask
+## @ C        - source clip for non-edges
+## @ E        - source clip for edges in result as determined by edge mask
+## @ M        - edge mask; overrides internally generated mask 
+##              (if supplied, 'maskthr' and 'maskblur' have no effect)
 ## @ maskthr  - edge mask threshold (0~255, default 128)
 ## @ maskblur - amount of mask blur (0.0~1.0, default 0.6)
 ## @ strength - strength of clip 'E' blend (0.0~1.0, default 1.0)
 ## @ showmask - if true, return the edge mask
 ## 
-function EdgeMerge(clip N, clip M, clip E, 
+function EdgeMerge2(clip C, clip E, clip "M", 
 \               int "maskthr", float "maskblur",
 \               float "strength", bool "showmask")
 {
-    M        = Default(M, N)
-    Assert(!N.IsYV411 && (N.IsYUV||N.IsYUVA), 
-    \  "EdgeMerge clip 'N' - RGB, YV411 not accepted") ## (cf. Overlay)
-    Assert(!M.IsYV411 && (M.IsYUV||M.IsYUVA), 
-    \  "EdgeMerge clip 'M' - RGB, YV411 not accepted")
-    Assert(!E.IsYV411 && (E.IsYUV||E.IsYUVA), 
-    \  "EdgeMerge clip 'E' - RGB, YV411 not accepted")
+    Assert(C.Is420||C.Is422||C.Is444, 
+    \  "EdgeMerge clip 'C' - YUV 420/422/444 only")
+    Assert(E.Is420||E.Is422||E.Is444, 
+    \  "EdgeMerge clip 'E' - YUV 420/422/444 only")
     maskthr  = Min(Max(0, Default(maskthr, 128)), 255)
+    maskthr  = C.sc8x(maskthr) 
     maskblur = Min(Max(0.0, Default(maskblur, 0.6)), 1.0)
     strength = Min(Max(0.0, Default(strength,  1.0)), 1.0)
     showmask = Default(showmask, false)
 
-    maskthr  = N.sc8x(maskthr) 
-    M  = M.mt_edge("hprewitt", thY1=maskthr, thY2=maskthr)
-    \     .Grayscale.Blur(0.6)
+    M = (Defined(M) && IsClip(M)) ? M
+    \ : C.mt_edge("hprewitt", thY1=maskthr, thY2=maskthr, chroma=C.sc8s(-128))
+    \     .Blur(maskblur)
 
-    return (showmask) ? M : Overlay(N, E, mask=M, opacity=strength)
+    return (showmask) ? M 
+    \ : Overlay(C, E, mask=M, opacity=strength)
 }
 
 ### fka BoxMask3
@@ -1483,9 +1502,39 @@ function BoxMaskOverlay(clip C,
     \           opacity=opacity)
 }
 
+#######################################
+### merge 'Lo', 'Hi' clips based on clip 'T' luma
+##
+## @ T      - control clip: Y-only or YUV(A); PC range;
+##            if brighter, show more of 'Hi' clip
+## @ Lo, Hi - source clips: properties must be compatible with one another
+## 
+function MergeLH(clip T, clip Lo, clip Hi)
+{
+    Assert(T.IsY || T.IsYUV || T.IsYUVA,
+    \   "MergeLH: 'T' must be Y/YUV/YUVA")
+    Assert(Lo.Width==Hi.Width && Lo.Height==Hi.Height,
+    \   "MergeLH: 'Lo' and 'Hi' height and width must match")
+    Assert(Lo.PixelType==Hi.PixelType,
+    \   "MergeLH: 'Lo' and 'Hi' color format and bit depth must match")
+
+    ## eq. (z * (x / range_size)) + (y * (1 - (x / range_size)))
+    ##
+    s = "x range_size / z * 1 x range_size / - y * + "
+
+    return (Lo.HasAlpha)
+    \ ? Expr(T, Lo, Hi, s, s, s, s, format=Lo.PixelType)
+    \ : Expr(T, Lo, Hi, s, s, s, format=Lo.PixelType)
+}
+
 ## old version here: http://forum.doom9.org/showthread.php?p=1691736#post1691736
 #######################################
-### merge Lo, Mid, Hi clips based on clip 'C' luma
+### merge 'Lo', 'Mid', 'Hi' clips based on clip 'T' luma
+##
+## @ T      - control clip: Y-only or YUV(A); PC range;
+##            if brighter, show more of 'Hi' clip
+##
+## @ Lo, Mid, Hi - source clips: properties must be compatible with one another
 ##
 ## @ ctr_lo    - peak response luminance for low mask 'bandpass';
 ##               range = -127d_127d; default 0d
@@ -1505,7 +1554,7 @@ function BoxMaskOverlay(clip C,
 ##
 ## version 2017-05-19 AVS+, MaskTools 2.2.x deep color
 ##
-function MergeLMH(clip C, clip C_lo, clip C_mid, clip C_hi,
+function MergeLMH(clip T, clip Lo, clip Mid, clip Hi,
 \               float "ctr_lo", float "ctr_hi", float "qfactor",
 \               bool "showmasks")
 {
@@ -1515,8 +1564,8 @@ function MergeLMH(clip C, clip C_lo, clip C_mid, clip C_hi,
     cHi  = Min(Max(  127, Default(ctr_hi, 255.0)), 383)
     q    = Min(Max(0.001, Default(qfactor, 0.7)),  40.0)
     
-    wid  = C.sc8f(60)
-    ramp = C.sc8f(Min(Max(0, 59.82 * Pow(q, -0.76)),  512))
+    wid  = T.sc8f(60)
+    ramp = T.sc8f(Min(Max(0, 59.82 * Pow(q, -0.76)),  512))
 
     ## equation:
     ## 255 * ((1 + ((wid/fs1x2) * (fs1/ramp)) ) - ( (abs(x-ctr)/fs1) * (fs1/ramp) ))
@@ -1525,12 +1574,12 @@ function MergeLMH(clip C, clip C_lo, clip C_mid, clip C_hi,
     \       .ReplaceStr("$wid",   StrinF(wid))
     \       .ReplaceStr("$ramp",  StrinF(ramp))
 
-    sLo  = s.ReplaceStr("$ctr", C.sc8s(cLo)) 
-    sHi  = s.ReplaceStr("$ctr", C.sc8s(cHi)) 
-    m128 = C.sc8s(-128)
+    sLo  = s.ReplaceStr("$ctr", T.sc8s(cLo)) 
+    sHi  = s.ReplaceStr("$ctr", T.sc8s(cHi)) 
+    m128 = T.sc8s(-128)
 
-    mask_lo = C.mt_lut(sLo, chroma=m128)
-    mask_hi = C.mt_lut(sHi, chroma=m128)
+    mask_lo = T.mt_lut(sLo, chroma=m128)
+    mask_hi = T.mt_lut(sHi, chroma=m128)
 
     ## equation:
     ## 255 - (x + y)
@@ -1539,15 +1588,15 @@ function MergeLMH(clip C, clip C_lo, clip C_mid, clip C_hi,
 
     mask_mid = mt_lutxy(mask_lo, mask_hi, sMid)
 
-    R = C.mt_merge(C_lo,  mask_lo,  luma=true)
-    \    .mt_merge(C_mid, mask_mid, luma=true)
-    \    .mt_merge(C_hi,  mask_hi,  luma=true) 
+    R = T.mt_merge(Lo,  mask_lo,  luma=true)
+    \    .mt_merge(Mid, mask_mid, luma=true)
+    \    .mt_merge(Hi,  mask_hi,  luma=true) 
 
     return (!show) ? R
     \  : StackVertical(
-    \       StackHorizontal(C.AddBorders(0,0,8,0), mask_lo).AddBorders(0,0,0,8),
+    \       StackHorizontal(T.AddBorders(0,0,8,0), mask_lo).AddBorders(0,0,0,8),
     \       StackHorizontal(mask_mid.AddBorders(0,0,8,0), mask_hi)
-    \    ).BilinearResize(C.Width, C.height)
+    \    ).BilinearResize(T.Width, T.height)
     \     .Subtitle("Low",    align=9)
     \     .Subtitle("\nMid",  align=4, lsp=0)
     \     .Subtitle("\nHigh", align=6, lsp=0)
@@ -2301,6 +2350,56 @@ function SmoothLimiter(clip C,
 }
 
 ##################################
+### simple gamma adjustment (more = brighter lowlights)
+##
+function GammaCurve(clip C, float gamma, bool "tvrange")
+{
+    tvrange = Default(tvrange, !C.IsRGB)
+    if (tvrange) {
+        return C.Levelss(16, gamma, 235, 16, 235, coring=false, chroma=false)
+    }
+    else {
+        return C.Levelss(0, gamma, 255, 0, 255, coring=false, chroma=false)
+    }
+}
+
+##################################
+### simple 'anti-gamma' adjustment (more = darker highlights)
+##
+function AntigammaCurve(clip C, float antigamma, bool "tvrange")
+{
+    tvrange = Default(tvrange, !C.IsRGB)
+    if (tvrange) {
+        C
+        Invert.ColorYUV(off_y=(-5))
+        Levelss(16, antigamma, 235, 16, 235, coring=false, chroma=false)
+        Invert.ColorYUV(off_y=(-5))
+        return Last
+    }
+    else {
+        C
+        Invert
+        Levelss(2, antigamma, 253, 2, 253, coring=false, chroma=false)
+        Invert
+        return Last
+    }
+}
+
+###################################
+### merge GammaCurve and AntigammaCurve
+##
+function GammaScurve(clip C, float gamma, float antigamma, bool "tvrange")
+{
+    tvrange = Default(tvrange, !C.IsRGB)
+    C
+    Lo = GammaCurve(gamma, tvrange)
+    Hi = AntigammaCurve(antigamma, tvrange)
+    #SmoothPoints2(Round(Min(0, -4.0*(gamma-1.0))), Round(Max(0, 16.0*(gamma-1.0)))) 
+    #return Last
+    return MergeLH(C, Lo, Hi)
+}
+
+##################################
 ### enhance contrast in lowlights (USM) & highlights (stretch)
 ## requires [[SGradation2D]]
 ##
@@ -2662,6 +2761,8 @@ function NonlinLC(clip C, float "str", float "rad")
 ## http://forum.doom9.org/showthread.php?p=1555234#post1555234
 ## (modded Raffriff42 - lowered strength of effect if "str" < 1.0)
 ## following header comments by raffriff42
+## https://forum.doom9.org/showthread.php?p=1821086#post1821086
+## https://forum.doom9.org/showthread.php?p=1690165#post1690165
 ##
 ## @ z     - default 6     (3 = subtle; 16 = massive)  
 ## @ pow   - default 1.6   (1.0 = oversharp; 4.0 = mild)  
@@ -2856,6 +2957,25 @@ function ChromaWarpSharpener(clip C, int "strength", bool "yv24_ignored")
 
     return CombinePlanes(C.ExtractY, U.ExtractY, V.ExtractY, "YUV",
     \       pixel_type="YUV" + (C.Is444?"444":"420") + "P" + String(bits))
+}
+
+##################################
+### subtle sharpening effect
+## based on an idea by videofred
+##
+## @ multi   - suggested range 1_5; no effect if <=0
+## @ sharpen - strength of each Sharpen operation; default 0.6
+## @ blur    - strength of each Blur    operation; default 0.3
+##
+function MultiSharpen(clip C, int multi, float "sharpen", float "blur")
+{
+    shrp = Min(Max(0.0, Default(sharpen, 0.6)), 1.0)
+    blr  = Min(Max(0.0, Default(blur,    0.3)), 1.0)
+    C
+    for (i=multi, 1, -1) {
+        Sharpen(shrp).Blur(blr)
+    }
+    return Last
 }
 
 #######################################################################################
@@ -4178,6 +4298,8 @@ function TekScopes(clip C, bool "shrink")
 {
     Assert(C.Is420, 
     \   "TekScopes: source must be YUV420")
+    Assert(C.Height>=260,
+    \   "TekScopes: source clip minimum height = 260")
     shrink = Default(shrink, false)
 
     CS = C.BilinearResize(1280, C.CalcHeight(1280))

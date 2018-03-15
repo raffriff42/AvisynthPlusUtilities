@@ -45,6 +45,7 @@
 ## v2018-03-01 bugixes; removed obsolete workarounds (AVS+ r2632); 
 ##              ToRGB/ToYUV 'alpha' defaults; move filters in MISC to DIAGNOSTIC
 ## v2018-03-09 rename Levelsc -> Levelss; drop LevelsPlus
+## v2018-03-13 minor bugfixes
 
 global R41_HISTX = 264 ## amount classic Histogram adds to clip width (with added borders)
 global R41_BITMAX = 16 ## max implicit bit depth (float temp. disabled pending more tests)
@@ -186,8 +187,8 @@ global R41_BITMAX = 16 ## max implicit bit depth (float temp. disabled pending m
     ### add an alpha plane from another clip
     #@ function AddAlphaPlane42(clip C, clip A, bool "silent")
 
-    ### make changes needed to display on vdubFM (VirtualDub FilterMod)
-    #@ function ToVdubFM(clip C, bool "dither")
+    ### make changes needed to display on VirtualDub2 (fka VirtualDub FilterMod, vdubFM)
+    #@ function ToVdub2(clip C, bool "dither")
 
     ### Match color format of source 'C' to template 'T'
     #@ function MatchColorFormat(clip C, clip T, string "matrix", bool "keepbits", bool "dither")
@@ -1520,15 +1521,16 @@ function AddAlphaPlane42(clip C, clip A, bool "silent")
     return R
 }
 
+## fka ToVdubFM
 ##################################
-### make changes needed to display on vdubFM (VirtualDub2, fka FilterMod)
+### make changes needed to display on VirtualDub2 (fka VirtualDub-FilterMod, vdubFM)
 ##  [https://sourceforge.net/projects/vdfiltermod/]
 ##
 ## @ dither - if true, reduce bit depth to 8 bit with dithering if applicable;
 ##            default false
 ##
 ## vdubFM does not currently support all AVS+ color spaces; 
-## ToVdubFM does minimally-destructive translation
+## ToVdub2 does minimally-destructive translation
 ## per docs, vdubFM accepts:
 ##      10-bit 422 (v210 interleaved)
 ##      16-bit 422, 444, 420 (planar)
@@ -1543,20 +1545,20 @@ function AddAlphaPlane42(clip C, clip A, bool "silent")
 ## version 2017-05-16 dither option; bugfixes after more thorough testing
 ## version 2017-05-22 16-bit 444 not displaying, so falling back to 422
 ## version 2018-03-10 for VirtualDub2 v19.0 (greatly improved YUV support)
-## version 2018-03-13 revert
+## version 2018-03-13 revert 2018-03-10; name change
 ##
-function ToVdubFM(clip C, bool "dither")
+function ToVdub2(clip C, bool "dither")
 {
     dit8 = Default(dither, false)
     bits = C.BitsPerComponent
     dith = (bits > 8 && bits < 32) ? 0 : -1
 
     Assert(IsClip(C),
-    \   "ToVdubFM: clip 'C' appears to be invalid")
+    \   "ToVdub2: clip 'C' appears to be invalid")
     Assert(HasVideo(C),
-    \   "ToVdubFM: clip 'C' appears not to contain video")
+    \   "ToVdub2: clip 'C' appears not to contain video")
     Assert(C.Height>0 && C.Width>0,
-    \   "ToVdubFM: clip 'C' appears to be zero width or height")
+    \   "ToVdub2: clip 'C' appears to be zero width or height")
 
     CY = (C.HasAlpha) ? C.RemoveAlphaPlane : C
 
@@ -1604,14 +1606,14 @@ function ToVdubFM(clip C, bool "dither")
     \            : C.ConvertBits42(16)             .ConvertToYUV422  
     \                                          [* 16bit: ConvertToY ng ? *]
     \ : Assert(false,
-    \   "ToVdubFM: internal error 2: clip 'C' has unrecognized pixel type")
+    \   "ToVdub2: internal error 2: clip 'C' has unrecognized pixel type")
 
     Assert(IsClip(R),
-    \   "ToVdubFM: internal error 4: clip 'R' invalid")
+    \   "ToVdub2: internal error 4: clip 'R' invalid")
     Assert(HasVideo(R),
-    \   "ToVdubFM: internal error 6: clip 'R' has no video")
+    \   "ToVdub2: internal error 6: clip 'R' has no video")
     Assert(R.Height>0 && R.Width>0,
-    \   "ToVdubFM: internal error 8: clip 'R' zero width or height")
+    \   "ToVdub2: internal error 8: clip 'R' zero width or height")
     return R
 }
 
@@ -3462,23 +3464,32 @@ function ColorRampEx(clip T, int "left_color", int "right_color", int "height",
     top  = Default(ontop, false)
     side = Default(onside, false)
     inst = Default(inset, false)
+#return T.Info
 
     TR = (side) ? T.TurnLeft : T
     TH = TR.To16bit
+#return TH.Info ## source, turned left
+#return TR.Info
     
     (T.IsRGB) 
     \ ? ColorRamp(TH,       lcc, rcc, hgt, zig)
     \ : ColorRamp(TH.ToRGB, lcc, rcc, hgt, zig)
     MatchColorFormat(T, dither=true)
     Trim(0, length=1).Loop(T.FrameCount)
+#return Last.Info ## ramp only
 
     ## HACK "Last.Height" because "Height" is arg name
-    (!top) ? Last
-    \ : StackVertical(
+    (top) ? StackVertical(
     \       Last.CropEx(TR.Width, Last.Height, mod=1), 
     \       (inst) ? TR.CropLRTB(0, 0, hgt, 0) : TR
     \ ) 
+    \ : (side) ? StackVertical(
+    \       Last.CropEx(TR.Width, Last.Height, mod=1), 
+    \       (inst) ? TR.CropLRTB(0, 0, hgt, 0) : TR
+    \ ) 
+    \ : Last
     (side) ? TurnRight : Last
+#return Last.Info ## source + ramp on right
 
     return (top && T.HasAudio) 
     \ ? AudioDub(T) 
@@ -3709,77 +3720,6 @@ function vector_marks(clip T, int "bits", int "style")
 
     return R.Trim(0, length=1).Loop(T.Framecount) 
 }
-/*
-function vector_labels(clip T, int "bits", bool "colors")
-{
-    bits   = Default(bits, 8)
-    dims   = (bits==12) ? 4096
-    \      : (bits==11) ? 2048
-    \      : (bits==10) ? 1024
-    \      : (bits==9)  ? 512
-    \      : 256
-    sc     = Float(dims) / 256  ## scale factor
-    sz     = 16 * sc            ## base font size
-    szs    = 3*sz/4             ## smaller font size
-    colors = Default(colors, false)
-
-    y10  = sc*245-sz   
-    y25  = sc*230-sz   
-    y35  = sc*220-sz  
-    y40  = sc*215-sz   
-    y55  = sc*200-sz   
-    y60  = sc*195-sz   
-    y90  = sc*165-sz   
-    y110 = sc*145-sz   
-    y130 = sc*125-sz   
-    y150 = sc*105-sz   
-    
-    y200 = sc*55-sz   
-    y210 = sc*45-sz   
-    y220 = sc*35-sz   
-    y230 = sc*25-sz 
-
-    fg = $666666
-    bg = $282828
-
-    BlankClip(T, channels=0, audio_rate=0, width=dims, height=dims, 
-    \   color=$ff000000, 
-    \   pixel_type=BitsToPixelType("RGBA", T.BitsPerComponent))
-
-    R = Last
-    \ .Subtitle("U+",   x=sc*220, y=y130, text_color=fg, halo_color=bg, size=sz)
-    \ .Subtitle("0°",   x=sc*220, y=y110, text_color=fg, halo_color=bg, size=szs)
-    \ .Subtitle("V+",   x=sc*120, y=y230, text_color=fg, halo_color=bg, size=sz)
-    \ .Subtitle("90°",  x=sc*117, y=y210, text_color=fg, halo_color=bg, size=szs)
-    \ .Subtitle("U-",   x=sc*20,  y=y90,  text_color=fg, halo_color=bg, size=sz)
-    \ .Subtitle("180°", x=sc*15,  y=y110, text_color=fg, halo_color=bg, size=szs)
-    \ .Subtitle("V-",   x=sc*120, y=y25,  text_color=fg, halo_color=bg, size=sz)
-    \ .Subtitle("270°", x=sc*115, y=y10,  text_color=fg, halo_color=bg, size=szs)
-    
-    R = (!colors) ? R : R
-    \ .Subtitle("B",    x=sc*200, y=y110, text_color=$4c4cff, halo_color=bg, size=sz)
-    \ .Subtitle("M",    x=sc*180, y=y200, text_color=$bc4cbc, halo_color=bg, size=sz)
-    \ .Subtitle("R",    x=sc*90,  y=y210, text_color=$ff4c4c, halo_color=bg, size=sz)
-    \ .Subtitle("Y",    x=sc*40,  y=y130, text_color=$a3a351, halo_color=bg, size=sz)
-    \ .Subtitle("G",    x=sc*50,  y=y40,  text_color=$4cb04c, halo_color=bg, size=sz)
-    \ .Subtitle("C",    x=sc*145, y=y35,  text_color=$66b0b0, halo_color=bg, size=sz)
-
-    if (0>0) {
-      R = (!colors) ? R : R
-      \ .Subtitle("48°",  x=sc*180, y=y220, text_color=$804c80, halo_color=bg, size=szs)
-      \ .Subtitle("102°", x=sc*82,  y=y230, text_color=$804c4c, halo_color=bg, size=szs)
-      \ .Subtitle("176°", x=sc*35,  y=y150, text_color=$666633, halo_color=bg, size=szs)
-      \ .Subtitle("230°", x=sc*45,  y=y60,  text_color=$336e33, halo_color=bg, size=szs)
-      \ .Subtitle("282°", x=sc*140, y=y55,  text_color=$336666, halo_color=bg, size=szs)
-    }
-
-    ## alpha: raise halo_color+4 -> white
-    A = R.ExtractG.Levels(0, 1.0, R.sc8x($24), 0, R.sc8x($ff), coring=false)
-    R = R.AddAlphaPlane42(A)
-
-    return R.Trim(0, length=1).Loop(T.Framecount) 
-}
-*/
 
 ##################################
 ### Classic [[Histogram]], waveform on top (or on bottom); supports RGB

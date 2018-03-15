@@ -1,5 +1,6 @@
 ### Simple 'equalizer' style interface for SmoothAdjust/SmoothCurves
 ## version 2018-03-10 raffriff42
+## https://forum.doom9.org/showthread.php?t=175323
 
 ## requires AviSynth+
 # http://avisynth.nl/index.php/AviSynth+
@@ -21,7 +22,7 @@
 #@ function SmoothPointsLimiter(clip C, 
 ##\               int "min_luma", int "max_luma", 
 ##\               int "min_chroma", int "max_chroma",
-##\               int "knee_zone")
+##\               float "max_sat", int "knee_zone")
 
 ### SmoothCurves interface: simple 'x'-point curve (2, 3, 5, 7 or 9 points)
 #@ function SmoothPoints2(clip C, 
