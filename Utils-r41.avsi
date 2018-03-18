@@ -4,6 +4,7 @@
 ##   http://avisynth.nl/index.php/User:Raffriff42/Utils-r41_Quick_Reference
 ## download latest:
 ##   http://avisynth.nl/images/Utils-r41.avsi
+##   https://raw.githubusercontent.com/raffriff42/AvisynthPlusUtilities/master/Utils-r41.avsi
 ##
 ## Version history:
 ## v0.41    (2017-05-13) raffriff42
@@ -46,6 +47,7 @@
 ##              ToRGB/ToYUV 'alpha' defaults; move filters in MISC to DIAGNOSTIC
 ## v2018-03-09 rename Levelsc -> Levelss; drop LevelsPlus
 ## v2018-03-13 minor bugfixes
+## v2018-03-18 SoftLimiter2
 
 global R41_HISTX = 264 ## amount classic Histogram adds to clip width (with added borders)
 global R41_BITMAX = 16 ## max implicit bit depth (float temp. disabled pending more tests)
@@ -263,6 +265,14 @@ global R41_BITMAX = 16 ## max implicit bit depth (float temp. disabled pending m
     ##\               bool "greymask", string "output", bool "ignore_conditional",
     ##\               bool "pc_range", int "align", int "borderwidth", int "bordercolor")
 
+    ### [[Limiter]] with knee zone; implemented using [[Expr]]
+    #@ function SoftLimiter2(clip C, 
+    ##\               int "min_y", int "max_y",  
+    ##\               int "min_u", int "max_u", 
+    ##\               int "min_v", int "max_v", 
+    ##\               int "knee_luma", int "knee_chroma",
+    ##\               float "max_sat", int "taper")
+
 ### TIMELINE FILTERS
 
     ### "slip" (advance or delay) a clip in time.
@@ -370,10 +380,14 @@ global R41_BITMAX = 16 ## max implicit bit depth (float temp. disabled pending m
     #@ function Grayramp(clip T, int "height", bool "zigs", bool "ontop", bool "onside", bool "inset")
 
     ### YUV/RGB vectorscope with optional audio meters
-    #@ function Vector2(clip C, string "matrix", bool "bottom", bool "labels", int "style", bool "audio")
+    #@ function Vector2(clip C, string "mode", string "matrix", bool "bottom", 
+    ##\               bool "labels", int "style", bool "audio")
 
     ### vectorscope quadrant and (optional) color labels 
     #@ function vector_labels(clip T, int "bits", bool "colors", bool "flip")
+
+    ### vectorscope graticule marks 
+    #@ function vector_marks(clip T, int "bits", int "style")
 
     ### Classic [[Histogram]], waveform on top (or on bottom); supports RGB
     ### many little enhancements; accepts both YUV & RGB
@@ -381,7 +395,8 @@ global R41_BITMAX = 16 ## max implicit bit depth (float temp. disabled pending m
 
     ### show video waveform + vectorscope; many little enhancements; accepts both YUV & RGB
     #@ function ScopeR(clip C, bool "shrink", bool "vector", string "matrix", 
-    ##\               bool "parade", bool "bottom", bool "labels")
+    ##\               bool "parade", bool "bottom", string "mode", 
+    ##\               bool "labels", int "style", bool "audio")
 
     ### Augmented [[Histogram]]; reduce or eliminate high, low and center highlighting;
     #@ function _Hist2(clip C, string "mode", float "factor", int "tvrange_offset", bool "keepsource")
@@ -390,8 +405,9 @@ global R41_BITMAX = 16 ## max implicit bit depth (float temp. disabled pending m
     #@ function _HistRGB(clip C, bool "parade", bool "keepsource")
 
     ### Simple waveform + vectorscope. Accepts 8-bit, YUV(A) only.
-    #@ function ScopeY(clip C, bool "shrink", bool "vector", bool "levels", bool "bottom", 
-    ##\               bool "labels", int "style", bool "audio")
+    #@ function ScopeY(clip C, bool "shrink", bool "vector", bool "levels",  
+    ##\               bool "bottom", string "mode", bool "labels", int "style", 
+    ##\               bool "audio")
 
     ### print color channel statistics on the screen
     #@ function Analyze(clip C, bool "format")
@@ -570,17 +586,18 @@ function FormatTime(int t_hours, int t_mins, float t_secs, int "decimals")
 function BitsToPixelType(string prefix, int bits, int "chroma")
 {
     prefix = UCase(prefix)
-    prefix = (StrCmp(prefix, "RGB" )==0) ? prefix
-    \      : (StrCmp(prefix, "RGBA")==0) ? prefix
-    \      : (StrCmp(prefix, "YUV" )==0) ? prefix
-    \      : (StrCmp(prefix, "YUVA")==0) ? prefix
-    \      : (StrCmp(prefix, "Y"   )==0) ? prefix
+    prefix = (StrCmpi(prefix, "RGB" )==0) ? prefix
+    \      : (StrCmpi(prefix, "RGBA")==0) ? prefix
+    \      : (StrCmpi(prefix, "YUV" )==0) ? prefix
+    \      : (StrCmpi(prefix, "YUVA")==0) ? prefix
+    \      : (StrCmpi(prefix, "Y"   )==0) ? prefix
     \      : ""
     Assert(StrLen(prefix)>0,
     \   "BitsToPixelType: 'prefix' not one of (RGB|RGBA|YUV|YUVA|Y)")
 
     isrgb  = FindStr(prefix, "RGB")==1
     isyuv  = FindStr(prefix, "YUV")==1
+    isalph = (StrCmpi(prefix, "YUVA")==0 || StrCmpi(prefix, "RGBA")==0)
     chroma = Default(chroma, 0)
     schrom = (chroma==444) ? "444"
     \      : (chroma==422) ? "422"
@@ -594,10 +611,10 @@ function BitsToPixelType(string prefix, int bits, int "chroma")
     prefix = (isrgb)           ? prefix+"P" : prefix
     prefix = (isyuv && bits>0) ? prefix+"P" : prefix
     
-    sbits  = ((isrgb || isyuv) && bits==32) ? "S" 
-    \      : ((isrgb || isyuv) && bits==8) ? "" 
+    sbits  = ((isrgb || isyuv)  && bits==32) ? "S" 
+    \      : ((isyuv && isalph) && bits==8 ) ? "8" 
+    \      : ((isrgb || isyuv)  && bits==8 ) ? "" 
     \      : String(bits)
-    
     return (prefix + sbits)
 }
 
@@ -1898,9 +1915,9 @@ function ToPC(clip C)
     sy = sy + sscale
     su = su + sscale
 
-    return (C.IsRGB) 
-    \ ? R.Expr(sy, sy, sy, format=C.PixelType)
-    \ : R.Expr(sy, su, su, format=C.PixelType)
+    return (C.IsRGB) ? R.Expr(sy, sy, sy, format=C.PixelType)
+    \    : (C.IsY)   ? R.Expr(sy, format=C.PixelType)
+    \                : R.Expr(sy, su, su, format=C.PixelType)
 }
 
 ##############################
@@ -1936,9 +1953,9 @@ function ToTV(clip C)
     sy = sy + sscale
     su = su + sscale
 
-    return (C.IsRGB) 
-    \ ? R.Expr(sy, sy, sy, format=C.PixelType)
-    \ : R.Expr(sy, su, su, format=C.PixelType)
+    return (C.IsRGB) ? R.Expr(sy, sy, sy, format=C.PixelType)
+    \    : (C.IsY)   ? R.Expr(sy, format=C.PixelType)
+    \                : R.Expr(sy, su, su, format=C.PixelType)
 }
 
 ##############################
@@ -2460,6 +2477,118 @@ function Subtitle42(clip C, string text, float "x", float "y",
     \ : (IsPlanarRGBA)
     \    ? CombinePlanes("RGBA", source_planes="GRBA")
     \    : Last
+    return Last
+}
+
+#######################################
+### [[Limiter]] with knee zone; implemented using [[Expr]]
+##
+## @ C       - source clip; YUV(A) only, 8-16bit. (A is passed unchanged)
+## @ min_y   - Y channel lower bound; default  16d
+## @ max_y   - Y channel upper bound; default 235d
+## @ min_u   - U channel lower bound; default  16d ("yellow")
+## @ max_u   - U channel upper bound; default 240d ("blue")
+## @ min_v   - V channel lower bound; default  16d ("green/cyan")
+## @ max_v   - V channel upper bound; default 240d ("red/magenta")
+## @ knee_y  - depth of  luma  soft-clipping zone. range 10-60; default 20.
+## @ knee_c  - depth of chroma soft-clipping zone. range 10-60; default 20.
+## @ max_sat - overrides min_u/v, max_u/v: limits maximum excursion from center.
+##             maximum 1.0 (100%), minimum 0.4 (40%); no default.
+## @ taper   - amount of chroma taper (choma limiting at luma extremes)
+##             higher values = less saturation at extreme darks & lights;
+##             range 0 to 3; default 2
+##
+## @ version 1.0 2018-03-18 
+##
+function SoftLimiter2(clip C, 
+\               int "min_y", int "max_y",  
+\               int "min_u", int "max_u", 
+\               int "min_v", int "max_v", 
+\               int "knee_luma", int "knee_chroma",
+\               float "max_sat", int "taper")
+{
+    Assert(C.IsYUV||C.IsYUVA,
+    \   "SoftLimiter2: source must be YUV(A)")
+    C
+    bits  = BitsPerComponent
+
+    sat   = Min(Max(0.4, Default(max_sat, 1.0)), 1.0)
+    cab   = Round(sat*128)
+    kny   = Min(Max(10, Default(knee_luma, 20)), 60)
+    knc   = Min(Max(10, Default(knee_chroma, 20)), 60)
+
+    p1y   = Min(Max(0, Default(min_y, 16)), 64)
+    p2y   = p1y + kny
+    p5y   = Min(Max(255-64, Default(max_y, 235)), 255)
+    p4y   = p5y - kny
+
+    p1u   = Min(Max(0, Default(min_u, 16)), 64)
+    p1u   = !Defined(max_sat) ? cu1 : Min(Max(0, 128-cab), 128-40)
+    p2u   = p1u + knc
+    p5u   = Min(Max(255-64, Default(max_u, 240)), 255)
+    p5u   = !Defined(max_sat) ? p5u : Min(Max(128+40, 128+cab), 255)
+    p4u   = p5u - knc
+
+    p1v   = Min(Max(0, Default(min_v, 16)), 64)
+    p1v   = !Defined(max_sat) ? p1v : Min(Max(0, 128-cab), 128-40)
+    p2v   = p1v + knc
+    p5v   = Min(Max(255-64, Default(max_v, 240)), 255)
+    p5v   = !Defined(max_sat) ? p5v : Min(Max(128+40, 128+cab), 255)
+    p4v   = p5v - knc
+
+    taper = Min(Max(0, Default(taper, 2)), 3)
+    widu  = Select(taper, 200, 180, 140, 140)
+    widv  = Select(taper, 200, 160, 120,  80)
+    rampu = Select(taper, 110, 105,  95,  95)
+    rampv = Select(taper, 110,  95,  75,  65)
+    ##  .................. 0 .. 1 .. 2 .. 3
+
+    ## Eq. (x < $p2) ? ((x / $p2 * ($p2-$p1)) + $p1)
+    ##   : (x > $p4) ? (((x-$p4) / (255-$p4) * ($p5-$p4)) + $p4)
+    ##   : x
+    s0  = "x $p2 < " + "x $p2 / $p2 $p1 - * $p1 + "
+    \   + "x $p4 > " + "x $p4 - range_size $p4 - / $p5 $p4 - * $p4 + "
+    \   + "x ? ? "
+    
+    sy = s0.ReplaceStr("$p1",    sc8s(p1y))
+    \      .ReplaceStr("$p2",    sc8s(p2y))
+    \      .ReplaceStr("$p4",    sc8s(p4y))
+    \      .ReplaceStr("$p5",    sc8s(p5y))
+
+    ## Eq. = ( 1 + $width / 512 * 256 / $ramp ) - ( abs(x-$center) / 256 * 256 / $ramp ) 
+    ## [range limited to 0,1] [y normalized to ±128d]
+    sc = s0 + "X^ "
+    \  + "$width range_size 2 * / range_size $ramp / * "
+    \  + "1 + y range_half - abs range_size / range_size $ramp / * - "
+    \  + "0 max 1 min X range_half - * range_half + "
+    
+    su = sc.ReplaceStr("$p1",    sc8s(p1u))
+    \      .ReplaceStr("$p2",    sc8s(p2u))
+    \      .ReplaceStr("$p4",    sc8s(p4u))
+    \      .ReplaceStr("$p5",    sc8s(p5u))
+    \      .ReplaceStr("$width", sc8s(widu))
+    \      .ReplaceStr("$ramp",  sc8s(rampu))
+
+    sv = sc.ReplaceStr("$p1",    sc8s(p1v))
+    \      .ReplaceStr("$p2",    sc8s(p2v))
+    \      .ReplaceStr("$p4",    sc8s(p4v))
+    \      .ReplaceStr("$p5",    sc8s(p5v))
+    \      .ReplaceStr("$width", sc8s(widv))
+    \      .ReplaceStr("$ramp",  sc8s(rampv))
+
+    O  = Last
+    Y  = ExtractY
+    U  = ExtractU
+    V  = ExtractV
+
+    Y  = Y.Expr(sy)
+    Ys = Y.BilinearResize(U.Width, U.Height)
+    U  = Expr(U, Ys, su)
+    V  = Expr(V, Ys, sv)
+
+    (C.HasAlpha)
+    \ ? CombinePlanes(Y, U, V, C, "YUVA", source_planes="YYYA", pixel_type=C.PixelType)
+    \ : CombinePlanes(Y, U, V,    "YUV",  source_planes="YYY",  pixel_type=C.PixelType)
     return Last
 }
 
@@ -3520,17 +3649,20 @@ function Grayramp(clip T, int "height", bool "zigs", bool "ontop", bool "onside"
 ##  Inverted to emulate analog vectorscope;
 ##  red is top-left and hue increases counter-clockwise
 ##
+## @ mode   - "color" or "color2"; default "color"
 ## @ matrix - determines RGB conversion (if needed)
 ## @ bottom - if true, put scope in lower-right; else (default) put in upper-right
 ## @ labels - if true (default), add axis labels
 ## @ style  - select type of graticule marks: 0=none; 1=ColorbarsHD (default), 2=MiniBars
 ## @ audio  - if true, add audio levels and lissajous meters
 ##
-function Vector2(clip C, string "matrix", bool "bottom", bool "labels", int "style", bool "audio")
+function Vector2(clip C, string "mode", string "matrix", bool "bottom", 
+\               bool "labels", int "style", bool "audio")
 {
     Assert(C.Height>=260,
     \   "Vector2: source clip minimum height = 260")
     matrix = Default(matrix, "Rec601")    
+    modes  = Default(mode, "color")    
     bottom = Default(bottom, false)
     labels = Default(labels, true)
     style  = Default(style, 1)
@@ -3542,22 +3674,42 @@ function Vector2(clip C, string "matrix", bool "bottom", bool "labels", int "sty
     (C.IsYUV && !C.IsYV411) ? Last 
     \ : ConvertToYV24(matrix=matrix)
 
-    BilinearResize(Height, Height)
+    mode = (StrCmpi(modes, "color")==0)  ? 1
+    \    : (StrCmpi(modes, "color2")==0) ? 2
+    \    : Assert(false,
+    \        "Vector2: invalid 'mode' argument")
+
+    #BilinearResize(Height, Height)
+    PointResize(Height, Height)
 
     FlipVertical
-    Histogram("color2")
+    (mode==1) ? Histogram("color")
+    \         : Histogram("color2")
     Crop(Height, 0, 0, 256)
     FlipVertical
-    
-    ## brighten up to make faint dots visible:
-    ColorYUV(off_y=(-16*15), gain_y=16, f2c=true)
-    ColorYUV(gain_y=0.6, cont_v=0, cont_u=0, f2c=true)
+
+    if (mode==2) {
+        ## mode="color2"
+        ## brighten up to make faint dots visible:
+        ColorYUV(off_y=(-20*15), gain_y=20, f2c=true)
+        ColorYUV(gain_y=0.6, cont_v=0, cont_u=0, f2c=true)
+    }
+
+    ## 16-240 rectangle & 100% saturation circle:
+    H2=BlankClip(Last)
+    \   .Histogram("color2")
+    \   .Crop(Width, 0, 0, 256)
+    \   .ColorYUV(off_y=(-20*15), gain_y=20, f2c=true)
+    \   .ColorYUV(gain_y=0.6, cont_v=0, cont_u=0, f2c=true)
+    \   .Trim(0, length=1).Loop(C.FrameCount)
+    Tweak(sat=0.5)
+    Overlay(H2, mode="lighten", opacity=(mode==1?0.25:1.0))
 
     if (labels) {
         Lbls = C.vector_labels(colors=1>0)
         Mrks = C.vector_marks(style=style)
-        Overlay(Lbls, mask=Lbls.ExtractA, opacity=1.0)
-        Overlay(Mrks, mask=Mrks.ExtractA, mode="lighten", opacity=0.7)
+        Overlay(Lbls, mask=Lbls.ExtractA)
+        Overlay(Mrks, mask=Mrks.ExtractA, mode="lighten", opacity=0.5)
     }
 
     if (audio && C.HasAudio && (C.Height-Height)>=128) {
@@ -3629,8 +3781,8 @@ function vector_labels(clip T, int "bits", bool "colors")
     sz4 = sz/4
 
     R = Last
-    \ .Subtitle("U+",   x=sc*245-sz2, y=sc*115-sz2, text_color=fg, halo_color=bg, size=sz)
-    \ .Subtitle("0°",   x=sc*250-zs2, y=sc*130-zs2, text_color=fg, halo_color=bg, size=szs)
+    \ .Subtitle("U+",   x=sc*240-sz2, y=sc*105-sz2, text_color=fg, halo_color=bg, size=sz)
+    \ .Subtitle("0°",   x=sc*245-zs2, y=sc*123-zs2, text_color=fg, halo_color=bg, size=szs)
     \ .Subtitle("V+",   x=sc*140-sz2, y=sc* 25-sz2, text_color=fg, halo_color=bg, size=sz)
     \ .Subtitle("90°",  x=sc*135-zs2, y=sc* 15-zs2, text_color=fg, halo_color=bg, size=szs)
     \ .Subtitle("U-",   x=sc* 25-sz2, y=sc*145-sz2, text_color=fg, halo_color=bg, size=sz)
@@ -3639,12 +3791,12 @@ function vector_labels(clip T, int "bits", bool "colors")
     \ .Subtitle("270°", x=sc*132-szs, y=sc*245-zs2, text_color=fg, halo_color=bg, size=szs)
     
     R = (!colors) ? R : R
-    \ .Subtitle("B", x=sc*195-sz4, y=sc*145-sz2, text_color=$4c4cff, halo_color=bg, size=sz)
-    \ .Subtitle("M", x=sc*175-sz4, y=sc* 40-sz2, text_color=$bc4cbc, halo_color=bg, size=sz)
-    \ .Subtitle("R", x=sc* 80-sz4, y=sc* 35-sz2, text_color=$ff4c4c, halo_color=bg, size=sz)
-    \ .Subtitle("Y", x=sc* 40-sz4, y=sc*135-sz2, text_color=$a3a351, halo_color=bg, size=sz)
-    \ .Subtitle("G", x=sc* 65-sz4, y=sc*215-sz2, text_color=$4cb04c, halo_color=bg, size=sz)
-    \ .Subtitle("C", x=sc*160-sz4, y=sc*230-sz2, text_color=$66b0b0, halo_color=bg, size=sz)
+    \ .Subtitle("B", x=sc*205-sz4, y=sc*110-sz2, text_color=$4c4cff, halo_color=bg, size=sz)
+    \ .Subtitle("M", x=sc*165-sz4, y=sc* 40-sz2, text_color=$bc4cbc, halo_color=bg, size=sz)
+    \ .Subtitle("R", x=sc* 75-sz4, y=sc* 40-sz2, text_color=$ff4c4c, halo_color=bg, size=sz)
+    \ .Subtitle("Y", x=sc* 40-sz4, y=sc*145-sz2, text_color=$a3a351, halo_color=bg, size=sz)
+    \ .Subtitle("G", x=sc* 70-sz4, y=sc*225-sz2, text_color=$4cb04c, halo_color=bg, size=sz)
+    \ .Subtitle("C", x=sc*170-sz4, y=sc*230-sz2, text_color=$66b0b0, halo_color=bg, size=sz)
 
     ## alpha: raise halo_color+4 -> white
     A = R.ExtractG.Levels(0, 1.0, R.sc8x($24), 0, R.sc8x($ff), coring=false)
@@ -3656,6 +3808,7 @@ function vector_labels(clip T, int "bits", bool "colors")
 #############################################
 ### vectorscope graticule marks 
 ## (marks only; no vectorscope; assume vectorscope is flipped vertically)
+## (marks NOT in final position, pending further testing on multiple systems)
 ##
 ## @ T      - template clip for bit depth, framerate etc
 ## @ bits   - determines resulting clip size; cf. Histogram:bits; 
@@ -3664,6 +3817,11 @@ function vector_labels(clip T, int "bits", bool "colors")
 ## @ style  - select type of graticule marks: 0=none; 1=ColorbarsHD (default), 2=MiniBars
 ##
 ## @ returns black clip with labels: RGBA with mask on A channel, no audio
+##
+## @ Example usage
+## | Histogram("color2").Crop(...).FlipVertical
+## | Mrks = vector_marks(...)
+## | Overlay(Mrks, mask=Mrks.ExtractA, mode="lighten", opacity=0.5)
 ##
 function vector_marks(clip T, int "bits", int "style")
 {
@@ -3678,11 +3836,11 @@ function vector_marks(clip T, int "bits", int "style")
     sz     = 16 * sc            ## base font size
     szb    = 3*sz               ## bigger font size
 
-    fg = $666666
-    bg = $0
+    ## colors optimized for use with example in description
+    fg = $bfbfbf
+    bg = $282828
 
     BlankClip(T, channels=0, audio_rate=0, width=dims, height=dims, 
-    \   color=$ff000000, 
     \   pixel_type=BitsToPixelType("RGBA", T.BitsPerComponent))
 
     fnt = "Times New Roman"
@@ -3691,11 +3849,11 @@ function vector_marks(clip T, int "bits", int "style")
     sz4 = szb/4
     sz5 = szb/5
 
-    bluX = sc*Select(style, 0, 213, 213)-sz5
+    bluX = sc*Select(style, 0, 212, 213)-sz5
     magX = sc*Select(style, 0, 193, 183)-sz5
-    redX = sc*Select(style, 0, 106, 100)-sz5
-    yelX = sc*Select(style, 0,  42,  43)-sz5
-    grnX = sc*Select(style, 0,  60,  72)-sz5
+    redX = sc*Select(style, 0, 108, 100)-sz5
+    yelX = sc*Select(style, 0,  43,  43)-sz5
+    grnX = sc*Select(style, 0,  62,  72)-sz5
     cynX = sc*Select(style, 0, 147, 155)-sz5
 
     bluY = sc*Select(style, 0, 127, 132)-sz3
@@ -3757,24 +3915,37 @@ function HistogramTurn(clip C, bool "parade", bool "shrink", bool "bottom")
 ## @ parade - if true, show RGB waveforms side-by-side;
 ##            else (default), show RGB waveforms superimposed
 ## @ bottom - if true, put scopes below video (default false)
+## @ mode   - vectorscope mode, "color" or "color2"; default "color"
 ## @ labels - if true (default), add axis labels
+## @ style  - select type of graticule marks: 0=none; 1=ColorbarsHD (default), 2=MiniBars
+## @ audio  - if true, add audio levels and lissajous meters
 ##
 ## version 2017-05-09 support RGB, deep color
 ## version 2017-05-18 matrix argument
 ##
 function ScopeR(clip C, bool "shrink", bool "vector", string "matrix", 
-\                 bool "parade", bool "bottom", bool "labels")
+\               bool "parade", bool "bottom", string "mode", 
+\               bool "labels", int "style", bool "audio")
 {
     Assert(C.Height>=260,
     \   "ScopeR: source clip minimum height = 260")
-    shrink  = Default(shrink, false)
-    vector  = Default(vector, false)
-    matrix  = Default(matrix, "Rec709")
-    parade  = Default(parade, false)
-    bottom  = Default(bottom, false)
-    labels  = Default(labels, true)
+    shrink = Default(shrink, false)
+    vector = Default(vector, false)
+    matrix = Default(matrix, "Rec709")
+    parade = Default(parade, false)
+    bottom = Default(bottom, false)
+    mode   = Default(mode, "color")    
+    labels = Default(labels, true)
+    style  = Default(style, 1)
+    audio  = Default(audio, false)
+
     Assert(shrink==false || (C.Width>=360 && C.Height>=360), 
     \   "ScopeR: source must be at least 360x360 for shrink mode") 
+
+    mode = (StrCmpi(mode, "color")==0)  ? mode
+    \    : (StrCmpi(mode, "color2")==0) ? mode
+    \    : Assert(!vector,
+    \        "ScopeR: invalid 'mode' argument")
 
     bits = C.BitsPerComponent
     wid  = C.Width
@@ -3808,7 +3979,7 @@ function ScopeR(clip C, bool "shrink", bool "vector", string "matrix",
     \ : StackVertical(R, C)
 
     V = (vector)
-    \ ? C.Vector2(matrix, labels=labels)
+    \ ? C.Vector2(mode, matrix, labels=labels, style=style, audio=audio)
     \    .Crop(C.Width, 0, 0, Min(C.Height, 256))
     \ : Nop
 
@@ -3920,6 +4091,7 @@ function _HistRGB(clip C, bool "parade", bool "keepsource")
 ## @ vector - if true (default), show Histogram("color2") (inverted to emulate analog vectorscope) 
 ## @ levels - if true, show Histogram("levels", 1.0); default false.
 ## @ bottom - if true, put scopes below video (default false)
+## @ mode   - vectorscope mode, "color" or "color2"; default "color"
 ## @ labels - if true (default), add axis labels
 ## @ style  - select type of graticule marks: 0=none; 1=ColorbarsHD (default), 2=MiniBars
 ## @ audio  - if true, add audio levels and lissajous meters
@@ -3927,8 +4099,9 @@ function _HistRGB(clip C, bool "parade", bool "keepsource")
 ## * Smaller heights are faster to process; scopes look relatively bigger; 
 ##   (at height=512, scopes occupy the bottom half of the output; at 720, about 1/3; at 1080, 1/4)
 ##
-function ScopeY(clip C, bool "shrink", bool "vector", bool "levels", bool "bottom", 
-\               bool "labels", int "style", bool "audio")
+function ScopeY(clip C, bool "shrink", bool "vector", bool "levels",  
+\               bool "bottom", string "mode", bool "labels", int "style", 
+\               bool "audio")
 {
     Assert(IsClip(C) && (C.IsYUV || C.IsYUVA), 
     \   "ScopeY: source must be YUV(A)")
@@ -3941,6 +4114,7 @@ function ScopeY(clip C, bool "shrink", bool "vector", bool "levels", bool "botto
     vector = Default(vector, true)
     levels = Default(levels, false)
     bottom = Default(bottom, false)
+    mode   = Default(mode, "color")    
     labels = Default(labels, true)
     style  = Default(style, 1)
     audio  = Default(audio, false)
@@ -3952,6 +4126,11 @@ function ScopeY(clip C, bool "shrink", bool "vector", bool "levels", bool "botto
     cwid = C.Width
     chgt = C.Height
     C 
+
+    mode = (StrCmpi(mode, "color")==0)  ? mode
+    \    : (StrCmpi(mode, "color2")==0) ? mode
+    \    : Assert(!vector,
+    \        "ScopeY: invalid 'mode' argument")
 
     shgt = chgt - R41_HISTX
     (shrink) 
@@ -3969,7 +4148,7 @@ function ScopeY(clip C, bool "shrink", bool "vector", bool "levels", bool "botto
     \ ? (!levels) 
     \     ? Last 
     \     : AddBorders(0, 0, R41_HISTX, 0) 
-    \ : Vector2(bottom=(bottom||levels), labels=labels, style=style, audio=audio)
+    \ : Vector2(mode, bottom=(bottom||levels), labels=labels, style=style, audio=audio)
 
     ## if bottom=true and vector=false, put levels on bottom
     (!levels) 

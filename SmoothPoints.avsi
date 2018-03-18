@@ -2,6 +2,9 @@
 ## version 2018-03-10 raffriff42
 ## https://forum.doom9.org/showthread.php?t=175323
 
+## download latest:
+##   https://raw.githubusercontent.com/raffriff42/AvisynthPlusUtilities/master/SmoothPoints.avsi
+
 ## requires AviSynth+
 # http://avisynth.nl/index.php/AviSynth+
 
@@ -85,7 +88,11 @@ function SmoothPointsLimiter(clip C,
 \               int "min_chroma", int "max_chroma",
 \               float "max_sat", int "knee_zone", bool "lsb")
 {
+    Assert(C.IsYUV||C.IsYUVA,
+    \   "SmoothPointsLimiter: source must be YUV(A)")
     C
+    (C.IsYUVA) ? RemoveAlphaPlane : Last
+
     bits    = BitsPerComponent
     is8bit  = bits==8
     lsb     = Default(lsb, false) && is8bit
@@ -111,8 +118,6 @@ function SmoothPointsLimiter(clip C,
 
     if (is8bit && !lsb) 
     {
-        defcurve = "0-0;255-255"
-
         sy = ("0-$p1;$p2-$p2;$p3-$p3;$p4-$p4;255-$p5")
         sy = sy.ReplaceStr("$p1", String(yp1))
         \      .ReplaceStr("$p2", String(yp2))
@@ -132,7 +137,6 @@ function SmoothPointsLimiter(clip C,
     }
     else 
     {
-        defcurve = "0-0;65535-65535"
         (lsb) ? Last : To16bit
         O16=Last
         (lsb) ? Last : ToStack16(swap_planes=true)
@@ -158,6 +162,7 @@ function SmoothPointsLimiter(clip C,
         (lsb) ? Last : FromStack16(O16, swap_planes=true)
         (lsb) ? Last : MatchColorFormat(C)
     }
+    (C.IsYUVA) ? AddAlphaPlane(C) : Last
     return Last
 }
 

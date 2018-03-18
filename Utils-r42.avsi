@@ -5,6 +5,10 @@
 ## v2017-10-15 SuperSexyWidescreen
 ## v2017-11-15 GrayRadial, ColorRadial
 ## v2017-11-22 MergeFiveBand
+## v2018-03-12 MergeLH, GammaCurve etc
+
+## download latest:
+##   https://raw.githubusercontent.com/raffriff42/AvisynthPlusUtilities/master/Utils-r42.avsi
 
 ## requires AddGrain (if calling AddGrainAG)
 ##    http://avisynth.nl/index.php/AddGrain
@@ -131,10 +135,10 @@ global giUUTrim = 0
     ##\               string "mode", float "opacity", float "maskblur")
 
     ### merge 'Lo', 'Hi' clips based on clip 'T' luma
-    #@ function MergeLH(clip T, clip Lo, clip Hi)
+    #@ function MergeLH(clip T, clip Lo, clip Hi, float "bias")
 
     ### merge 'Lo', 'Mid', 'Hi' clips based on clip 'T' luma
-    #@ function MergeLMH(clip T, clip Lo, clip Mid, clip Hi,
+    #@ function MergeLMH(clip T, clip Lo, clip Mid, clip Hi, float "bias",
     ##\               float "ctr_lo", float "ctr_hi", float "qfactor",
     ##\               bool "showmasks")
 
@@ -300,11 +304,8 @@ global giUUTrim = 0
 
 ### RESIZE & TRANSFORM FILTERS
 
-    ### thin wrapper for [[nnedi3_resize16]] ([[nnedi3]]+[[Dither_resize16]]) with some default arguments
-    #@ function Nnedi316Resize(clip C, int wid, int hgt, float "sharp", bool "lsb_in", bool "lsb_out")
-
     ### high quality enlarge
-    #@ function Nnedi3Enlarge(clip C, int "wid", int "hgt",
+    #@ function Nnedi3Enlarge2(clip C, int "wid", int "hgt",
     ##\               bool "slower", bool "draft")
 
     ### high quality enlarge (simplified version - YV12 only)
@@ -1364,8 +1365,7 @@ function EdgeMerge2(clip C, clip E, clip "M",
     \  "EdgeMerge clip 'C' - YUV 420/422/444 only")
     Assert(E.Is420||E.Is422||E.Is444, 
     \  "EdgeMerge clip 'E' - YUV 420/422/444 only")
-    maskthr  = Min(Max(0, Default(maskthr, 128)), 255)
-    maskthr  = C.sc8x(maskthr) 
+    maskthr  = Min(Max(0, Default(maskthr, 128)), 255) ## autoscaled
     maskblur = Min(Max(0.0, Default(maskblur, 0.6)), 1.0)
     strength = Min(Max(0.0, Default(strength,  1.0)), 1.0)
     showmask = Default(showmask, false)
@@ -1505,18 +1505,24 @@ function BoxMaskOverlay(clip C,
 #######################################
 ### merge 'Lo', 'Hi' clips based on clip 'T' luma
 ##
-## @ T      - control clip: Y-only or YUV(A); PC range;
-##            if brighter, show more of 'Hi' clip
+## @ T      - control clip: PC range, color format must match Lo, Hi.
 ## @ Lo, Hi - source clips: properties must be compatible with one another
+## @ bias   - if < 0, favor 'Lo' clip; if > 0, favor 'Hi' clip; default 0.0
 ## 
-function MergeLH(clip T, clip Lo, clip Hi)
+function MergeLH(clip T, clip Lo, clip Hi, float "bias")
 {
-    Assert(T.IsY || T.IsYUV || T.IsYUVA,
-    \   "MergeLH: 'T' must be Y/YUV/YUVA")
-    Assert(Lo.Width==Hi.Width && Lo.Height==Hi.Height,
-    \   "MergeLH: 'Lo' and 'Hi' height and width must match")
-    Assert(Lo.PixelType==Hi.PixelType,
-    \   "MergeLH: 'Lo' and 'Hi' color format and bit depth must match")
+    Assert(Lo.Width==Hi.Width && Lo.Height==Hi.Height
+    \   && Lo.Width==T.Width && Lo.Height==T.Height,
+    \   "MergeLH: 'Lo', 'Hi' and 'T' height and width must match")
+    Assert(Lo.PixelType==Hi.PixelType
+    \   && Lo.PixelType==T.PixelType,
+    \   "MergeLH: 'Lo', 'Hi' and 'T' color format and bit depth must match")
+
+    bias = Default(bias, 0.0)
+
+    T = (Abs(bias)<0.01) ? T
+    \ : (   bias < 0.00) ? T.Gammacurve(1.0/(-bias+1.0), tvrange=false)
+    \                    : T.Gammacurve(bias+1.0, tvrange=false)
 
     ## eq. (z * (x / range_size)) + (y * (1 - (x / range_size)))
     ##
@@ -1524,17 +1530,16 @@ function MergeLH(clip T, clip Lo, clip Hi)
 
     return (Lo.HasAlpha)
     \ ? Expr(T, Lo, Hi, s, s, s, s, format=Lo.PixelType)
-    \ : Expr(T, Lo, Hi, s, s, s, format=Lo.PixelType)
+    \ : Expr(T, Lo, Hi, s, s, s,    format=Lo.PixelType)
 }
 
 ## old version here: http://forum.doom9.org/showthread.php?p=1691736#post1691736
 #######################################
 ### merge 'Lo', 'Mid', 'Hi' clips based on clip 'T' luma
 ##
-## @ T      - control clip: Y-only or YUV(A); PC range;
-##            if brighter, show more of 'Hi' clip
-##
+## @ T         - control clip: PC range; color format must match Lo/Mid/Hi
 ## @ Lo, Mid, Hi - source clips: properties must be compatible with one another
+## @ bias      - if < 0, favor 'Lo' clip; if > 0, favor 'Hi' clip; default 0.0
 ##
 ## @ ctr_lo    - peak response luminance for low mask 'bandpass';
 ##               range = -127d_127d; default 0d
@@ -1554,11 +1559,25 @@ function MergeLH(clip T, clip Lo, clip Hi)
 ##
 ## version 2017-05-19 AVS+, MaskTools 2.2.x deep color
 ##
-function MergeLMH(clip T, clip Lo, clip Mid, clip Hi,
+function MergeLMH(clip T, clip Lo, clip Mid, clip Hi, float "bias",
 \               float "ctr_lo", float "ctr_hi", float "qfactor",
 \               bool "showmasks")
 {
+    Assert(Lo.Width==Mid.Width && Lo.Height==Mid.Height
+    \   && Lo.Width==Hi.Width && Lo.Height==Hi.Height
+    \   && Lo.Width==T.Width && Lo.Height==T.Height,
+    \   "MergeLH: 'Lo', 'Mid', 'Hi' and 'T' height and width must match")
+    Assert(Lo.PixelType==Mid.PixelType 
+    \   && Lo.PixelType==Hi.PixelType
+    \   && Lo.PixelType==T.PixelType,
+    \   "MergeLH: 'Lo', 'Mid', 'Hi' and 'T' color format and bit depth must match")
+
+    bias = Default(bias, 0.0)
     show = Default(showmasks, false)
+
+    T = (Abs(bias)<0.01) ? T
+    \ : (   bias < 0.00) ? T.Gammacurve(1.0/(-bias+1.0), tvrange=false)
+    \                    : T.Gammacurve(bias+1.0, tvrange=false)
 
     cLo  = Min(Max( -127, Default(ctr_lo,   0.0)), 127)
     cHi  = Min(Max(  127, Default(ctr_hi, 255.0)), 383)
@@ -3347,37 +3366,6 @@ function ShiftRedBlue(clip C,
 ### RESIZE & TRANSFORM FILTERS
 #######################################################################################
 
-# http://avisynth.nl/index.php/Nnedi3_resize16
-#include "E:\Programs\Avisynth_Plugins\plugins-NOT\_misc\nnedi3_resize16_v3.3.avsi"
-#Import(pathMisc + "nnedi3_resize16_v3.3.avsi")
-##################################
-### thin wrapper for [[nnedi3_resize16]] ([[nnedi3]]+[[Dither_resize16]]) with some default arguments
-##
-function Nnedi316Resize(clip C, int wid, int hgt, float "sharp", bool "lsb_in", bool "lsb_out")
-{
-    #sharp = Min(Max(-0.99, Default(sharp, 0.0)), 1.0)
-    sharp = Min(Max(0.0, Default(sharp, 0.0)), 1.0)
-    lsb_in  = Default(lsb_in,  False)
-    lsb_out = Default(lsb_out, False)
-
-    zfact = (Float(wid)/C.Width + Float(hgt)/C.Height) / 2.0
-    kd = (zfact < 0.8) ? "bicubic" : "spline36"
-    ku = (zfact > 1.2) ? "bicubic" : "spline64"
-    C
-    nnedi3_resize16(wid, hgt, [* -0.5, -0.5, nns=4, *]
-    \           kernel_d=kd, kernel_u=ku, sharp=200.0*sharp,
-    \         [* f_d=1.0+sharp, f_u=1.0+sharp, thr=5.0, etype=1, *]
-    \           lsb_in=lsb_in, lsb=lsb_out,
-    \           tv_range=true, dither=0)
-    return Last.Sharpen(sharp/2.0)
-}
-
-# http://forum.doom9.org/showthread.php?t=170923
-# https://encodingtalk.com/threads/virtualdub-motion-blur.3544/#post-18653
-# requires Nnedi3 - http://forum.doom9.org/showthread.php?t=147695
-#LoadPlugin(pathBase + "QTGMC_Plugins\nnedi3.dll")  ## 0.9.4.0, 6/2011
-##LoadPlugin(pathBase + "Nnedi3\0947\x86\Release\nnedi3.dll") ## 0.9.4.7, 1/2014
-# ### if RGB not supported, try version 0.9.4.0 ###
 ##################################
 ### high quality enlarge
 ##
@@ -3391,22 +3379,20 @@ function Nnedi316Resize(clip C, int wid, int hgt, float "sharp", bool "lsb_in", 
 ## @version 1.3 Jul 2014 - improved quality
 ## @version 1.31 Jul 2014 - fixed broken backwards compatibility
 ## @version 1.32 Aug 2014 - fixed h-shift in YUV mode
+## @version 2.01 Mar 2018 - AVS+ hi bit depth; YUV only for now
 ##
-## -->AVS+ see [[Nnedi316Resize]]
-##
-function Nnedi3Enlarge(clip C, int "wid", int "hgt",
+function Nnedi3Enlarge2(clip C, int "wid", int "hgt",
 \               bool "slower", bool "draft")
 {
-#    Assert((C.IsYV12||C.IsYV24||C.IsRGB),
-#    \   "Nnedi3Enlarge: source must be YV12, YV24 or RGB")
-    Assert((wid>=C.Width && hgt>=C.Height),
-    \   "Nnedi3Enlarge: enlarging only")
-
     wid    = Max(16, Default(wid, 2*C.Width))
     hgt    = Max(16, Default(hgt, 2*C.Height))
     slower = Default(slower, false)
     draft  = Default(draft, false)
 
+    Assert(C.IsRGB||C.Is420||C.Is444,
+    \   "Nnedi3Enlarge2: source must be RGB(A) or YUV 420 or 444")
+    Assert(wid>=C.Width && hgt>=C.Height,
+    \   "Nnedi3Enlarge2: enlarging only")
     nns    = (slower) ? 4 : 3
     qual   = (slower) ? 2 : 1
     zfact  = Max(Float(wid)/C.Width, Float(hgt)/C.Height)
@@ -3416,39 +3402,19 @@ function Nnedi3Enlarge(clip C, int "wid", int "hgt",
     \      : (zfact > 4.0001) ?  8
     \      : (zfact > 2.0001) ?  4
     \      : 2
-    uvfact = (C.IsYV24) ? rfact : 2*rfact
     xshift = -(0.5 * rfact - 0.5)
 
-    y = (C.IsYV24==false) ? NOP
-    \ : C.Greyscale.nnedi3_rpow2(rfact, nns=nns, qual=qual)
-    \  .Spline16Resize(wid, hgt, src_left=xshift, src_top=-0.5)
-    #\  .Subtitle("\n\nxshift="+StrinF(xshift)+"\n(rfact="+String(rfact)+")", align=5, lsp=0)
+    Y = (C.IsRGB ? C : C.ExtractY)
 
-    u = (C.IsYV24==false) ? NOP
-    \ : C.UToY.nnedi3_rpow2(uvfact, nns=nns, qual=qual)
-    \  .Spline16Resize(wid, hgt, src_left=xshift, src_top=-0.5)
+    Y = Y.nnedi3_rpow2(rfact, nns=nns, qual=qual,
+    \       fwidth=wid, fheight=hgt, cshift="Spline64Resize", 
+    \       range=0)
+    UV = C.GaussResize(wid, hgt, p=50, src_left=xshift, src_top=-0.5)
 
-    v = (C.IsYV24==false) ? NOP
-    \ : C.VToY.nnedi3_rpow2(uvfact, nns=nns, qual=qual)
-    \  .Spline16Resize(wid, hgt, src_left=xshift, src_top=-0.5)
-
-    R24 = C.IsYUV ? NOP
-    \ : C.ConvertToRGB24.nnedi3_rpow2(rfact, nns=nns, qual=qual)
-    \  .Spline16Resize(wid, hgt, src_left=-0.5, src_top=-0.5)
-
-    A = (C.IsRGB32==false) ? NOP            
-    \ : C.ShowAlpha("YV12").nnedi3_rpow2(rfact, nns=nns, qual=qual)
-    \    .Spline16Resize(wid, hgt, src_left=-0.5, src_top=-0.5)
-
-    return (draft)
-    \ ? C.Spline16Resize(wid, hgt)
-    \ : C.IsRGB24 ? R24
-    \ : C.IsRGB32 ? MergeARGB(A, 
-    \       R24.ShowRed("YV12"), R24.ShowGreen("YV12"), R24.ShowBlue("YV12"))
-    \ : C.IsYV24  ? YToUV(u, v, y)
-    \ : C.nnedi3_rpow2(rfact, nns=nns, qual=qual)
-    \    .Spline16Resize(wid, hgt, src_left=xshift, src_top=-0.5)
-    #\    .Subtitle("\n\nxshift="+StrinF(xshift)+"\n(rfact="+String(rfact)+")", align=5, lsp=0)
+    return (draft) ? C.Spline16Resize(wid, hgt)
+    \ : (C.IsRGB) ? Y
+    \ : CombinePlanes(Y, UV, "YUV", 
+    \       source_planes="YUV", pixel_type=C.PixelType)
 }
 
 ##==> see also....
