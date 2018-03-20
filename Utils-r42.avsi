@@ -135,7 +135,7 @@ global giUUTrim = 0
     ##\               string "mode", float "opacity", float "maskblur")
 
     ### merge 'Lo', 'Hi' clips based on clip 'T' luma
-    #@ function MergeLH(clip T, clip Lo, clip Hi, float "bias")
+    #@ function MergeLH(clip T, clip Lo, clip Hi, float "lothresh", float "hithresh")
 
     ### merge 'Lo', 'Mid', 'Hi' clips based on clip 'T' luma
     #@ function MergeLMH(clip T, clip Lo, clip Mid, clip Hi, float "bias",
@@ -1504,29 +1504,32 @@ function BoxMaskOverlay(clip C,
 
 #######################################
 ### merge 'Lo', 'Hi' clips based on clip 'T' luma
+## can be used for simple luma keying 
 ##
 ## @ T      - control clip: PC range, color format must match Lo, Hi.
 ## @ Lo, Hi - source clips: properties must be compatible with one another
-## @ bias   - if < 0, favor 'Lo' clip; if > 0, favor 'Hi' clip; default 0.0
+## @ lothresh - level to pass 'Lo' clip 100%, default 16d for RGB, 32d for YUV
+## @ hithresh - level to pass 'Hi' clip 100%, default 239d for RGB, 223d for YUV
 ## 
-function MergeLH(clip T, clip Lo, clip Hi, float "bias")
+function MergeLH(clip T, clip Lo, clip Hi, float "lothresh", float "hithresh")
 {
     Assert(Lo.Width==Hi.Width && Lo.Height==Hi.Height
-    \   && Lo.Width==T.Width && Lo.Height==T.Height,
+    \   && Lo.Width==T.Width  && Lo.Height==T.Height,
     \   "MergeLH: 'Lo', 'Hi' and 'T' height and width must match")
     Assert(Lo.PixelType==Hi.PixelType
     \   && Lo.PixelType==T.PixelType,
     \   "MergeLH: 'Lo', 'Hi' and 'T' color format and bit depth must match")
 
-    bias = Default(bias, 0.0)
+    lothresh = Default(lothresh, (T.IsRGB ?  16 : 32))
+    hithresh = Default(hithresh, (T.IsRGB ? 239 : 223))
 
-    T = (Abs(bias)<0.01) ? T
-    \ : (   bias < 0.00) ? T.Gammacurve(1.0/(-bias+1.0), tvrange=false)
-    \                    : T.Gammacurve(bias+1.0, tvrange=false)
-
-    ## eq. (z * (x / range_size)) + (y * (1 - (x / range_size)))
-    ##
-    s = "x range_size / z * 1 x range_size / - y * + "
+    ##  eq. Min(Max(0, (x-lo)*255/(hi-lo)/255), 1)
+    ##      
+    s = ("x $tlo - 255@d * $thi $tlo - / 255@d / 1 min 0 max A^ "
+    \ +  "1 A - y * A z * + ")
+    \   .ReplaceStr("255@d", "range_size")
+    \   .ReplaceStr("$tlo",  T.sc8s(lothresh))
+    \   .ReplaceStr("$thi",  T.sc8s(hithresh))
 
     return (Lo.HasAlpha)
     \ ? Expr(T, Lo, Hi, s, s, s, s, format=Lo.PixelType)
@@ -1566,11 +1569,11 @@ function MergeLMH(clip T, clip Lo, clip Mid, clip Hi, float "bias",
     Assert(Lo.Width==Mid.Width && Lo.Height==Mid.Height
     \   && Lo.Width==Hi.Width && Lo.Height==Hi.Height
     \   && Lo.Width==T.Width && Lo.Height==T.Height,
-    \   "MergeLH: 'Lo', 'Mid', 'Hi' and 'T' height and width must match")
+    \   "MergeLMH: 'Lo', 'Mid', 'Hi' and 'T' height and width must match")
     Assert(Lo.PixelType==Mid.PixelType 
     \   && Lo.PixelType==Hi.PixelType
     \   && Lo.PixelType==T.PixelType,
-    \   "MergeLH: 'Lo', 'Mid', 'Hi' and 'T' color format and bit depth must match")
+    \   "MergeLMH: 'Lo', 'Mid', 'Hi' and 'T' color format and bit depth must match")
 
     bias = Default(bias, 0.0)
     show = Default(showmasks, false)
@@ -2371,8 +2374,14 @@ function SmoothLimiter(clip C,
 ##################################
 ### simple gamma adjustment (more = brighter lowlights)
 ##
+## @ tvrange - if true, anchor gamma curve on TV black (16d) and TV white (235d);
+##             default true for RGB source, false for YUV; 
+##             for Y-only sources, if 'tvrange' not specified, an error is raised.
+##
 function GammaCurve(clip C, float gamma, bool "tvrange")
 {
+    Assert(!C.IsY || Defined(tvrange), 
+    \   "GammaCurve: 'tvrange' must be defined for Y-only clips")
     tvrange = Default(tvrange, !C.IsRGB)
     if (tvrange) {
         return C.Levelss(16, gamma, 235, 16, 235, coring=false, chroma=false)
@@ -2385,8 +2394,14 @@ function GammaCurve(clip C, float gamma, bool "tvrange")
 ##################################
 ### simple 'anti-gamma' adjustment (more = darker highlights)
 ##
+## @ tvrange - if true, anchor gamma curve on TV black (16d) and TV white (235d);
+##             default true for RGB source, false for YUV; 
+##             for Y-only sources, if 'tvrange' not specified, an error is raised.
+##
 function AntigammaCurve(clip C, float antigamma, bool "tvrange")
 {
+    Assert(!C.IsY || Defined(tvrange), 
+    \   "AntigammaCurve: 'tvrange' must be defined for Y-only clips")
     tvrange = Default(tvrange, !C.IsRGB)
     if (tvrange) {
         C
@@ -2409,6 +2424,8 @@ function AntigammaCurve(clip C, float antigamma, bool "tvrange")
 ##
 function GammaScurve(clip C, float gamma, float antigamma, bool "tvrange")
 {
+    Assert(!C.IsY || Defined(tvrange), 
+    \   "GammaScurve: 'tvrange' must be defined for Y-only clips")
     tvrange = Default(tvrange, !C.IsRGB)
     C
     Lo = GammaCurve(gamma, tvrange)
@@ -3402,14 +3419,14 @@ function Nnedi3Enlarge2(clip C, int "wid", int "hgt",
     \      : (zfact > 4.0001) ?  8
     \      : (zfact > 2.0001) ?  4
     \      : 2
-    xshift = -(0.5 * rfact - 0.5)
+    #xshift = -(0.5 * rfact - 0.5)
 
     Y = (C.IsRGB ? C : C.ExtractY)
 
     Y = Y.nnedi3_rpow2(rfact, nns=nns, qual=qual,
     \       fwidth=wid, fheight=hgt, cshift="Spline64Resize", 
     \       range=0)
-    UV = C.GaussResize(wid, hgt, p=50, src_left=xshift, src_top=-0.5)
+    UV = C.Spline16Resize(wid, hgt)
 
     return (draft) ? C.Spline16Resize(wid, hgt)
     \ : (C.IsRGB) ? Y

@@ -233,10 +233,10 @@ global R41_BITMAX = 16 ## max implicit bit depth (float temp. disabled pending m
 
     ### remove sRGB gamma transfer function (if bit depth > 8) for linear-light processing
     ### ( used in [[#ScaleZoom]], [[#ScaleSize]] )
-    #@ function remove_gamma(clip C, bool "enable", string "matrix")
+    #@ function remove_gamma(clip C, string "matrix", bool "enable")
 
     ### apply standard gamma transfer function (if bit depth > 8) 
-    #@ function restore_gamma(clip C, bool "enable", string "matrix")
+    #@ function restore_gamma(clip C, string "matrix", bool "enable")
 
     ### ConvertBits wrapper
     #@ function ConvertBits42(clip C, int bits, int "dither", bool "nobias")
@@ -267,11 +267,11 @@ global R41_BITMAX = 16 ## max implicit bit depth (float temp. disabled pending m
 
     ### [[Limiter]] with knee zone; implemented using [[Expr]]
     #@ function SoftLimiter2(clip C, 
+    ##\               int "y_adj", float "max_sat", int "taper",
     ##\               int "min_y", int "max_y",  
     ##\               int "min_u", int "max_u", 
     ##\               int "min_v", int "max_v", 
-    ##\               int "knee_luma", int "knee_chroma",
-    ##\               float "max_sat", int "taper")
+    ##\               int "knee_y", int "knee_c")
 
 ### TIMELINE FILTERS
 
@@ -2032,15 +2032,23 @@ function stack_to_size(clip C, int wid, int hgt, bool "flip") {
 ##
 ##  Disabled for 8-bit processing as it would create banding; 12-bit recommended minimum.
 ##
-## @ matrix - transfer function; one of (sRGB|Rec709|Rec2020); default "sRGB"
-## @ enable - default true; if false, do nothing (bypass)
+## @ matrix  - transfer function; one of (sRGB|Rec709|Rec2020); default "sRGB"
+## @ tvrange - if true, anchor gamma curve on TV black (16d) and TV white (235d);
+##             default true for RGB source, false for YUV; 
+##             for Y-only sources, if 'tvrange' not specified, an error is raised.
+## @ enable  - default true; if false, do nothing (bypass)
 ##
-function remove_gamma(clip C, string "matrix", bool "enable")
+## @ version 2018-03-19 - tvrange
+##
+function remove_gamma(clip C, string "matrix", bool "tvrange", bool "enable")
 {
     Assert((C.IsRGB || C.IsYUV) && C.IsPlanar42, 
     \   "remove_gamma: planar RGB(A) or planar YUV only")
-    matrix = Default(matrix, "sRGB")
-    enable = Default(enable, true)
+    Assert(!C.IsY || Defined(tvrange), 
+    \   "remove_gamma: 'tvrange' must be defined for Y-only clips")
+    matrix  = Default(matrix, "sRGB")
+    tvrange = Default(tvrange, !C.IsRGB)
+    enable  = Default(enable,  true)
 
     matrix_id = (FindStr(matrix, "709")>0) ? 1
     \         : (FindStr(matrix, "202")>0) ? 2
@@ -2076,8 +2084,16 @@ function remove_gamma(clip C, string "matrix", bool "enable")
     ##   ? x / m
     ##   : ((x + (a - 1.0)) / a)^g
     ##
-    s = ("x 255@d / $t <= x 255@d / $m / x 255@d / $a 1 - + $a / $g ^ ? 255@d * ")
-    \    .ReplaceStr("@d", (C.IsRGB ? " scalef" : " scaleb"))
+    sx  = "X 255@d / $t <= x 255@d / $m / X 255@d / $a 1 - + $a / $g ^ ? 255@d * "
+
+    ## tvrange: ToPC, gamma, ToTV
+    stv = "x 16@d - 255@d 219@d / * 0.48@d - X^ "
+    \   + sx
+    \   + "219@d 255@d / * 16@d + 0.48@d -  "
+    spc = "x X^ " + sx 
+    
+    s = (tvrange) ? stv : spc 
+    s = s.ReplaceStr("@d", (C.IsRGB ? " scalef" : " scaleb"))
     \    .ReplaceStr("$a", String(a, "%0.9f"))
     \    .ReplaceStr("$g", String(g, "%0.9f"))
     \    .ReplaceStr("$m", String(m, "%0.9f"))
@@ -2093,15 +2109,23 @@ function remove_gamma(clip C, string "matrix", bool "enable")
 ### apply gamma transfer function (if bit depth > 8) 
 ##  only call this if gamma was previously removed.
 ##
-## @ matrix - transfer function; one of (sRGB|Rec709|Rec2020); default "sRGB"
-## @ enable - default true; if false, do nothing (bypass)
+## @ matrix  - transfer function; one of (sRGB|Rec709|Rec2020); default "sRGB"
+## @ tvrange - if true, anchor gamma curve on TV black (16d) and TV white (235d);
+##             default true for RGB source, false for YUV; 
+##             for Y-only sources, if 'tvrange' not specified, an error is raised.
+## @ enable  - default true; if false, do nothing (bypass)
 ##
-function restore_gamma(clip C, string "matrix", bool "enable")
+## @ version 2018-03-19 - tvrange
+##
+function restore_gamma(clip C, string "matrix", bool "tvrange", bool "enable")
 {
     Assert((C.IsRGB || C.IsYUV) && C.IsPlanar42, 
     \   "restore_gamma: planar RGB(A) or planar YUV only")
-    matrix = Default(matrix, "sRGB")
-    enable = Default(enable, true)
+    Assert(!C.IsY || Defined(tvrange), 
+    \   "restore_gamma: 'tvrange' must be defined for Y-only clips")
+    matrix  = Default(matrix, "sRGB")
+    tvrange = Default(tvrange, !C.IsRGB)
+    enable  = Default(enable,  true)
 
     matrix_id = (FindStr(matrix, "709")>0) ? 1
     \         : (FindStr(matrix, "202")>0) ? 2
@@ -2137,8 +2161,16 @@ function restore_gamma(clip C, string "matrix", bool "enable")
     ##   ? x * m
     ##   : a * (x ^ (1.0/g)) - (a - 1.0)
     ##
-    s = ("x 255@d / $t <= x 255@d / $m * x 255@d / 1 $g / ^ $a * $a 1 - - ? 255@d * ")
-    \    .ReplaceStr("@d", (C.IsRGB ? " scalef" : " scaleb"))
+    sx  = "X 255@d / $t <= X 255@d / $m * X 255@d / 1 $g / ^ $a * $a 1 - - ? 255@d * "
+    
+    ## tvrange: ToPC, gamma, ToTV
+    stv = "x 16@d - 255@d 219@d   / * 0.48@d - X^ "
+    \   + sx
+    \   + "219@d 255@d / * 16@d + 0.48@d -  "
+    spc = "x X^ " + sx
+    
+    s = (tvrange) ? stv : spc 
+    s = s.ReplaceStr("@d", (C.IsRGB ? " scalef" : " scaleb"))
     \    .ReplaceStr("$a", String(a, "%0.9f"))
     \    .ReplaceStr("$g", String(g, "%0.9f"))
     \    .ReplaceStr("$m", String(m, "%0.9f"))
@@ -2483,65 +2515,81 @@ function Subtitle42(clip C, string text, float "x", float "y",
 #######################################
 ### [[Limiter]] with knee zone; implemented using [[Expr]]
 ##
-## @ C       - source clip; YUV(A) only, 8-16bit. (A is passed unchanged)
-## @ min_y   - Y channel lower bound; default  16d
-## @ max_y   - Y channel upper bound; default 235d
+## @ C       - source clip; YUV(A) only, 8-16bit. (A is unchanged)
+## @ max_lum - percent of 16d-235d luma range allowed
+##             maximum 1.2 (120%), minimum 0.4 (40%); no default;
+##             overrides min_y, max_y below.
+## @ max_sat - percent of 16d-240d chroma range allowed;
+##             maximum 1.2 (120%), minimum 0.4 (40%); no default;
+##             overrides min_u, max_u, min_v, max_v below.
+## @ taper   - amount of chroma "taper" (added chroma limiting at luma extremes)
+##             higher values => less saturation at extreme darks & lights;
+##             range 0 (off) to 4; default 2
+##
+## -- A D V A N C E D   A R G U M E N T S -----------------------------------
+## @ min_y   - Y channel lower bound; default  16d ("white")
+## @ max_y   - Y channel upper bound; default 235d ("black")
 ## @ min_u   - U channel lower bound; default  16d ("yellow")
 ## @ max_u   - U channel upper bound; default 240d ("blue")
 ## @ min_v   - V channel lower bound; default  16d ("green/cyan")
 ## @ max_v   - V channel upper bound; default 240d ("red/magenta")
 ## @ knee_y  - depth of  luma  soft-clipping zone. range 10-60; default 20.
 ## @ knee_c  - depth of chroma soft-clipping zone. range 10-60; default 20.
-## @ max_sat - overrides min_u/v, max_u/v: limits maximum excursion from center.
-##             maximum 1.0 (100%), minimum 0.4 (40%); no default.
-## @ taper   - amount of chroma taper (choma limiting at luma extremes)
-##             higher values = less saturation at extreme darks & lights;
-##             range 0 to 3; default 2
+##
+## @ Examples:
+## | SoftLimiter2(taper=0) ## limit to TV range, no 'taper'
+## | SoftLimiter2(max_lum=1.2, max_sat=1.2, taper=0) ## almost no limiting
+## | SoftLimiter2(max_sat=0.7)  ## limit to "natural" looking colors
+## | SoftLimiter2(max_lum=1.05) ## "under-limit" luma slightly
 ##
 ## @ version 1.0 2018-03-18 
 ##
 function SoftLimiter2(clip C, 
+\               float "max_lum", float "max_sat", int "taper",
 \               int "min_y", int "max_y",  
 \               int "min_u", int "max_u", 
 \               int "min_v", int "max_v", 
-\               int "knee_luma", int "knee_chroma",
-\               float "max_sat", int "taper")
+\               int "knee_y", int "knee_c")
 {
     Assert(C.IsYUV||C.IsYUVA,
     \   "SoftLimiter2: source must be YUV(A)")
     C
     bits  = BitsPerComponent
 
-    sat   = Min(Max(0.4, Default(max_sat, 1.0)), 1.0)
-    cab   = Round(sat*128)
-    kny   = Min(Max(10, Default(knee_luma, 20)), 60)
-    knc   = Min(Max(10, Default(knee_chroma, 20)), 60)
+    lum   = Min(Max(0.4, Default(max_lum, 1.0)), 1.2)
+    lum   = Round(lum*110) ## (235-16)/2; 126 ± 110
+    sat   = Min(Max(0.4, Default(max_sat, 1.0)), 1.2)
+    sat   = Round(sat*112) ## (240-16)/2; 128 ± 112
+    kny   = Min(Max(10, Default(knee_y, 20)), 60)
+    knc   = Min(Max(10, Default(knee_c, 20)), 60)
 
     p1y   = Min(Max(0, Default(min_y, 16)), 64)
+    p1y   = !Defined(max_lum) ? p1y : Min(Max(-kny, 126-lum), 126-40)
     p2y   = p1y + kny
     p5y   = Min(Max(255-64, Default(max_y, 235)), 255)
+    p5y   = !Defined(max_lum) ? p5y : Min(Max(126+40, 126+lum), 255+kny)
     p4y   = p5y - kny
 
     p1u   = Min(Max(0, Default(min_u, 16)), 64)
-    p1u   = !Defined(max_sat) ? cu1 : Min(Max(0, 128-cab), 128-40)
+    p1u   = !Defined(max_sat) ? p1u : Min(Max(-knc, 128-sat), 128-40)
     p2u   = p1u + knc
     p5u   = Min(Max(255-64, Default(max_u, 240)), 255)
-    p5u   = !Defined(max_sat) ? p5u : Min(Max(128+40, 128+cab), 255)
+    p5u   = !Defined(max_sat) ? p5u : Min(Max(128+40, 128+sat), 255+knc)
     p4u   = p5u - knc
 
     p1v   = Min(Max(0, Default(min_v, 16)), 64)
-    p1v   = !Defined(max_sat) ? p1v : Min(Max(0, 128-cab), 128-40)
+    p1v   = !Defined(max_sat) ? p1v : Min(Max(-knc, 128-sat), 128-40)
     p2v   = p1v + knc
     p5v   = Min(Max(255-64, Default(max_v, 240)), 255)
-    p5v   = !Defined(max_sat) ? p5v : Min(Max(128+40, 128+cab), 255)
+    p5v   = !Defined(max_sat) ? p5v : Min(Max(128+40, 128+sat), 255+knc)
     p4v   = p5v - knc
 
-    taper = Min(Max(0, Default(taper, 2)), 3)
-    widu  = Select(taper, 200, 180, 140, 140)
-    widv  = Select(taper, 200, 160, 120,  80)
-    rampu = Select(taper, 110, 105,  95,  95)
-    rampv = Select(taper, 110,  95,  75,  65)
-    ##  .................. 0 .. 1 .. 2 .. 3
+    taper = Min(Max(0, Default(taper, 2)), 4)
+    widu  = Select(taper, 0, 200, 180, 140, 140)
+    widv  = Select(taper, 0, 200, 160, 120,  80)
+    rampu = Select(taper, 0, 110, 105,  95,  95)
+    rampv = Select(taper, 0, 110,  95,  75,  65)
+    ##  ................. 0 .. 1 .. 2 .. 3 .. 4
 
     ## Eq. (x < $p2) ? ((x / $p2 * ($p2-$p1)) + $p1)
     ##   : (x > $p4) ? (((x-$p4) / (255-$p4) * ($p5-$p4)) + $p4)
@@ -2555,21 +2603,24 @@ function SoftLimiter2(clip C,
     \      .ReplaceStr("$p4",    sc8s(p4y))
     \      .ReplaceStr("$p5",    sc8s(p5y))
 
+    ## taper:
     ## Eq. = ( 1 + $width / 512 * 256 / $ramp ) - ( abs(x-$center) / 256 * 256 / $ramp ) 
-    ## [range limited to 0,1] [y normalized to ±128d]
-    sc = s0 + "X^ "
+    ## [above result limited to 0,1] [u,v normalized to ±128d]
+    st = "X^ "
     \  + "$width range_size 2 * / range_size $ramp / * "
     \  + "1 + y range_half - abs range_size / range_size $ramp / * - "
     \  + "0 max 1 min X range_half - * range_half + "
+    su = (taper==0) ? s0 : s0 + st
+    sv = (taper==0) ? s0 : s0 + st
     
-    su = sc.ReplaceStr("$p1",    sc8s(p1u))
+    su = su.ReplaceStr("$p1",    sc8s(p1u))
     \      .ReplaceStr("$p2",    sc8s(p2u))
     \      .ReplaceStr("$p4",    sc8s(p4u))
     \      .ReplaceStr("$p5",    sc8s(p5u))
     \      .ReplaceStr("$width", sc8s(widu))
     \      .ReplaceStr("$ramp",  sc8s(rampu))
 
-    sv = sc.ReplaceStr("$p1",    sc8s(p1v))
+    sv = sv.ReplaceStr("$p1",    sc8s(p1v))
     \      .ReplaceStr("$p2",    sc8s(p2v))
     \      .ReplaceStr("$p4",    sc8s(p4v))
     \      .ReplaceStr("$p5",    sc8s(p5v))
@@ -3794,7 +3845,7 @@ function vector_labels(clip T, int "bits", bool "colors")
     \ .Subtitle("B", x=sc*205-sz4, y=sc*110-sz2, text_color=$4c4cff, halo_color=bg, size=sz)
     \ .Subtitle("M", x=sc*165-sz4, y=sc* 40-sz2, text_color=$bc4cbc, halo_color=bg, size=sz)
     \ .Subtitle("R", x=sc* 75-sz4, y=sc* 40-sz2, text_color=$ff4c4c, halo_color=bg, size=sz)
-    \ .Subtitle("Y", x=sc* 40-sz4, y=sc*145-sz2, text_color=$a3a351, halo_color=bg, size=sz)
+    \ .Subtitle("Y", x=sc* 45-sz4, y=sc*145-sz2, text_color=$a3a351, halo_color=bg, size=sz)
     \ .Subtitle("G", x=sc* 70-sz4, y=sc*225-sz2, text_color=$4cb04c, halo_color=bg, size=sz)
     \ .Subtitle("C", x=sc*170-sz4, y=sc*230-sz2, text_color=$66b0b0, halo_color=bg, size=sz)
 
