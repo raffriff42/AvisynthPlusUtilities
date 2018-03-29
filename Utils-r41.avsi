@@ -47,7 +47,7 @@
 ##              ToRGB/ToYUV 'alpha' defaults; move filters in MISC to DIAGNOSTIC
 ## v2018-03-09 rename Levelsc -> Levelss; drop LevelsPlus
 ## v2018-03-13 minor bugfixes
-## v2018-03-18 SoftLimiter2
+## v2018-03-29 SoftLimiter2, improved Vector2, vector_marks:style
 
 global R41_HISTX = 264 ## amount classic Histogram adds to clip width (with added borders)
 global R41_BITMAX = 16 ## max implicit bit depth (float temp. disabled pending more tests)
@@ -3705,7 +3705,8 @@ function Grayramp(clip T, int "height", bool "zigs", bool "ontop", bool "onside"
 ## @ matrix - determines RGB conversion (if needed)
 ## @ bottom - if true, put scope in lower-right; else (default) put in upper-right
 ## @ labels - if true (default), add axis labels
-## @ style  - select type of graticule marks: 0=none; 1=ColorbarsHD (default), 2=MiniBars
+## @ style  - graticule mark reference: 
+##            0=none; 1=ColorBars/601 (default); 2=ColorBars/709; 3=ColorbarsHD
 ## @ audio  - if true, add audio levels and lissajous meters
 ##
 function Vector2(clip C, string "mode", string "matrix", bool "bottom", 
@@ -3866,7 +3867,8 @@ function vector_labels(clip T, int "bits", bool "colors")
 ## @ bits   - determines resulting clip size; cf. Histogram:bits; 
 ##            size = 256 (bits=8, default and fallback); 512 (bits=9); 
 ##            1024 (bits=10); 2048 (bits=11); 4096 (bits=12)
-## @ style  - select type of graticule marks: 0=none; 1=ColorbarsHD (default), 2=MiniBars
+## @ style  - graticule mark reference: 
+##            0=none; 1=ColorBars/601 (default); 2=ColorBars/709; 3=ColorbarsHD
 ##
 ## @ returns black clip with labels: RGBA with mask on A channel, no audio
 ##
@@ -3901,19 +3903,21 @@ function vector_marks(clip T, int "bits", int "style")
     sz4 = szb/4
     sz5 = szb/5
 
-    bluX = sc*Select(style, 0, 212, 213)-sz5
-    magX = sc*Select(style, 0, 193, 183)-sz5
-    redX = sc*Select(style, 0, 108, 100)-sz5
-    yelX = sc*Select(style, 0,  43,  43)-sz5
-    grnX = sc*Select(style, 0,  62,  72)-sz5
-    cynX = sc*Select(style, 0, 147, 155)-sz5
+    bluX = 0.5*sc*Select(style, 0, 399, 399, 424, 426)-sz5
+    magX = 0.5*sc*Select(style, 0, 351, 367, 386, 366)-sz5
+    redX = 0.5*sc*Select(style, 0, 207, 220, 216, 200)-sz5
+    yelX = 0.5*sc*Select(style, 0, 110, 111,  86,  86)-sz5
+    grnX = 0.5*sc*Select(style, 0, 159, 143, 124, 144)-sz5
+    cynX = 0.5*sc*Select(style, 0, 304, 289, 294, 310)-sz5
+    ##                          0   1    2    3    4 (4=experimental HSL)
 
-    bluY = sc*Select(style, 0, 127, 132)-sz3
-    magY = sc*Select(style, 0,  42,  49)-sz3
-    redY = sc*Select(style, 0,  34,  35)-sz3
-    yelY = sc*Select(style, 0, 110, 105)-sz3
-    grnY = sc*Select(style, 0, 195, 188)-sz3
-    cynY = sc*Select(style, 0, 202, 202)-sz3
+    bluY = 0.5*sc*Select(style, 0, 262, 253, 254, 264)-sz3
+    magY = 0.5*sc*Select(style, 0, 116, 108,  84,  98)-sz3
+    redY = 0.5*sc*Select(style, 0,  92,  94,  68,  70)-sz3
+    yelY = 0.5*sc*Select(style, 0, 212, 224, 220, 210)-sz3
+    grnY = 0.5*sc*Select(style, 0, 356, 367, 390, 376)-sz3
+    cynY = 0.5*sc*Select(style, 0, 382, 381, 404, 404)-sz3
+    ##                          0   1    2     3   4 (4=experimental HSL)
 
     ## B, M, R, Y, G, C
     R = (style==0) ? Last : Last
@@ -3969,7 +3973,8 @@ function HistogramTurn(clip C, bool "parade", bool "shrink", bool "bottom")
 ## @ bottom - if true, put scopes below video (default false)
 ## @ mode   - vectorscope mode, "color" or "color2"; default "color"
 ## @ labels - if true (default), add axis labels
-## @ style  - select type of graticule marks: 0=none; 1=ColorbarsHD (default), 2=MiniBars
+## @ style  - graticule mark reference: 
+##            0=none; 1=ColorBars/601 (default); 2=ColorBars/709; 3=ColorbarsHD
 ## @ audio  - if true, add audio levels and lissajous meters
 ##
 ## version 2017-05-09 support RGB, deep color
@@ -4145,7 +4150,8 @@ function _HistRGB(clip C, bool "parade", bool "keepsource")
 ## @ bottom - if true, put scopes below video (default false)
 ## @ mode   - vectorscope mode, "color" or "color2"; default "color"
 ## @ labels - if true (default), add axis labels
-## @ style  - select type of graticule marks: 0=none; 1=ColorbarsHD (default), 2=MiniBars
+## @ style  - graticule mark reference: 
+##            0=none; 1=ColorBars/601 (default); 2=ColorBars/709; 3=ColorbarsHD
 ## @ audio  - if true, add audio levels and lissajous meters
 ##
 ## * Smaller heights are faster to process; scopes look relatively bigger; 
