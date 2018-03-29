@@ -2034,7 +2034,7 @@ function stack_to_size(clip C, int wid, int hgt, bool "flip") {
 ##
 ## @ matrix  - transfer function; one of (sRGB|Rec709|Rec2020); default "sRGB"
 ## @ tvrange - if true, anchor gamma curve on TV black (16d) and TV white (235d);
-##             default true for RGB source, false for YUV; 
+##             default false for RGB source, true for YUV; 
 ##             for Y-only sources, if 'tvrange' not specified, an error is raised.
 ## @ enable  - default true; if false, do nothing (bypass)
 ##
@@ -2111,7 +2111,7 @@ function remove_gamma(clip C, string "matrix", bool "tvrange", bool "enable")
 ##
 ## @ matrix  - transfer function; one of (sRGB|Rec709|Rec2020); default "sRGB"
 ## @ tvrange - if true, anchor gamma curve on TV black (16d) and TV white (235d);
-##             default true for RGB source, false for YUV; 
+##             default false for RGB source, true for YUV; 
 ##             for Y-only sources, if 'tvrange' not specified, an error is raised.
 ## @ enable  - default true; if false, do nothing (bypass)
 ##
@@ -3278,10 +3278,11 @@ function QGaussBlur(clip C, float radx, float "rady")
 {
     radx = Max(1.0, radx)            
     rady = Max(1.0, Default(rady, radx))
+
     return (radx<0.1 && rady<0.1) ? C
     \ : C.BilinearResize(
-    \        Max(16, modx(2, Float(C.Width)/(radx+1.0))), 
-    \        Max(16, modx(2, FLoat(C.Height)/(rady+1.0))))
+    \        Max(16, modx(4, Float(C.Width)/(radx+1.0))), 
+    \        Max(16, modx(4, FLoat(C.Height)/(rady+1.0))))
     \    .Blur(0.3) [*  *]
     \    .GaussResize(
     \        C.Width, C.Height, p=19)

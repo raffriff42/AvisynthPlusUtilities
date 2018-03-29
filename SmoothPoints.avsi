@@ -1,5 +1,7 @@
 ### Simple 'equalizer' style interface for SmoothAdjust/SmoothCurves
 ## version 2018-03-10 raffriff42
+## version 2018-03-28 bugfix screenW, screenH  
+
 ## https://forum.doom9.org/showthread.php?t=175323
 
 ## download latest:
@@ -585,8 +587,8 @@ function SmoothPoints9(clip C,
 ##              2 = on, process values outside TVrange
 ## @ dither   - on by default for 8 bit, off for 10-16 bit
 ## @ screenW, screenH  
-##            - set debug output screen size; default -2: same as 'C'
-##              (set both to -1 for desktop resolution)
+##            - set debug output screen size; default -1 (desktop resolution)
+##              (if supplied, must be <= current screen dimensions)
 ##
 ## (see SmoothAdjust docs for explanation of the other arguments)
 ##
@@ -625,14 +627,8 @@ function SmoothPts(clip C, string caller, string curve,
     debug   = Default(debug, false)
     wid     = Width
     hgt     = (lsb) ? Height/2 : Height
-    screenW = Default(screenW, -2)  ## (orig. -1: size of Windows desktop)
-    screenH = Default(screenH, -2)  ## (ditto)
-    screenW = (screenW==(-1)) ? -1
-    \       : (screenW==(-2)) ? Max(1280, wid)
-    \                         : Max(1280, screenW)
-    screenH = (screenH==(-1)) ? -1
-    \       : (screenH==(-2)) ? Max( 768, hgt)
-    \                         : Max( 768, screenH)
+    screenW = Default(screenW, -1)
+    screenH = Default(screenH, -1)
     scale   = Default(scale, true)
 
     if (is8bit && !lsb) 
@@ -661,12 +657,6 @@ function SmoothPts(clip C, string caller, string curve,
         \   useMT, useOPT, debug, screenW, screenH, scale)
         (lsb) ? Last : FromStack16(O16, swap_planes=true)
         (lsb) ? Last : MatchColorFormat(C)
-    }
-    if (debug && screenW==(-2)  && screenH==(-2)) {        
-        zx = Float(C.Width)  / Width
-        zy = Float(C.Height) / Height
-        ScaleZoom(Min(zx, zy), 4, gamma=false)
-        CropEx(C.Width, C.Height)
     }
     (!debug) ? Last
     \ : Subtitle(caller + ": '" + curve + "'", size=Max(8.0, Height/32.0))

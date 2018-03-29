@@ -103,7 +103,7 @@ global giUUTrim = 0
     #@ function mt_rgbmerge(clip C, clip D, clip M, float "opacity")
 
     ### simple edge mask
-    #@ function EdgeMask(clip C, int "threshold", float "blur")
+    #@ function EdgeMask(clip C, int "threshold", float "blur", string "mode")
 
     ### merge 2 clips with edge mask (deprecated)
     #@ function EdgeMerge(clip N, clip M, clip E, 
@@ -1322,16 +1322,18 @@ function mt_rgbmerge(clip C, clip D, clip M, float "opacity")
 ##################################
 ### simple edge mask
 ##
-## @ mthr - edge detection threshold (default 128d)
+## @ thr  - edge detection threshold (default 128d)
 ## @ blur - amount of postblur (default 0.6)
+## @ mode - edge detection mode (default "hprewitt")
 ##
-function EdgeMask(clip C, int "threshold", float "blur")
+function EdgeMask(clip C, int "thr", float "blur", string "mode")
 {
-    thr = Default(threshold, 128)
-    blr = Default(blur, 0.6)
+    thr  = Default(thr, 128)
+    blr  = Default(blur, 0.6)
+    mode = Default(mode, "hprewitt")
 
-    thr = C.sc8x(threshold)
-    return C.mt_edge("hprewitt", thY1=thr, thY2=thr, chroma=C.sc8s(-128))
+    thr = C.sc8x(thr)
+    return C.mt_edge(mode, thY1=thr, thY2=thr, chroma=C.sc8s(-128))
     \       .Blur(blr)
 }
 
@@ -2375,7 +2377,7 @@ function SmoothLimiter(clip C,
 ### simple gamma adjustment (more = brighter lowlights)
 ##
 ## @ tvrange - if true, anchor gamma curve on TV black (16d) and TV white (235d);
-##             default true for RGB source, false for YUV; 
+##             default false for RGB source, true for YUV; 
 ##             for Y-only sources, if 'tvrange' not specified, an error is raised.
 ##
 function GammaCurve(clip C, float gamma, bool "tvrange")
@@ -2395,7 +2397,7 @@ function GammaCurve(clip C, float gamma, bool "tvrange")
 ### simple 'anti-gamma' adjustment (more = darker highlights)
 ##
 ## @ tvrange - if true, anchor gamma curve on TV black (16d) and TV white (235d);
-##             default true for RGB source, false for YUV; 
+##             default false for RGB source, true for YUV; 
 ##             for Y-only sources, if 'tvrange' not specified, an error is raised.
 ##
 function AntigammaCurve(clip C, float antigamma, bool "tvrange")
@@ -2422,6 +2424,10 @@ function AntigammaCurve(clip C, float antigamma, bool "tvrange")
 ###################################
 ### merge GammaCurve and AntigammaCurve
 ##
+## @ tvrange - if true, anchor gamma curve on TV black (16d) and TV white (235d);
+##             default false for RGB source, true for YUV; 
+##             for Y-only sources, if 'tvrange' not specified, an error is raised.
+##
 function GammaScurve(clip C, float gamma, float antigamma, bool "tvrange")
 {
     Assert(!C.IsY || Defined(tvrange), 
@@ -2430,8 +2436,6 @@ function GammaScurve(clip C, float gamma, float antigamma, bool "tvrange")
     C
     Lo = GammaCurve(gamma, tvrange)
     Hi = AntigammaCurve(antigamma, tvrange)
-    #SmoothPoints2(Round(Min(0, -4.0*(gamma-1.0))), Round(Max(0, 16.0*(gamma-1.0)))) 
-    #return Last
     return MergeLH(C, Lo, Hi)
 }
 
@@ -2765,8 +2769,8 @@ function GaussianBlur42(clip C,
     B  = (gamma) ? C.remove_gamma : C
 
     B = B.BilinearResize(
-    \         Min(Max(4, w1 + (w1 % 2)), w0), 
-    \         Min(Max(4, h1 + (h1 % 2)), h0))
+    \         Min(Max(4, w1 + (w1 % 4)), w0), 
+    \         Min(Max(4, h1 + (h1 % 4)), h0))
 
     B = B.Blur(1.0).Blur(1.0)
     
