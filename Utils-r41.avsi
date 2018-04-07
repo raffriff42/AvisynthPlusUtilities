@@ -381,7 +381,7 @@ global R41_BITMAX = 16 ## max implicit bit depth (float temp. disabled pending m
 
     ### YUV/RGB vectorscope with optional audio meters
     #@ function Vector2(clip C, string "mode", string "matrix", bool "bottom", 
-    ##\               bool "labels", int "style", bool "audio")
+    ##\               bool "labels", int "marks", bool "audio")
 
     ### vectorscope quadrant and (optional) color labels 
     #@ function vector_labels(clip T, int "bits", bool "colors", bool "flip")
@@ -396,7 +396,7 @@ global R41_BITMAX = 16 ## max implicit bit depth (float temp. disabled pending m
     ### show video waveform + vectorscope; many little enhancements; accepts both YUV & RGB
     #@ function ScopeR(clip C, bool "shrink", bool "vector", string "matrix", 
     ##\               bool "parade", bool "bottom", string "mode", 
-    ##\               bool "labels", int "style", bool "audio")
+    ##\               bool "labels", int "marks", bool "audio")
 
     ### Augmented [[Histogram]]; reduce or eliminate high, low and center highlighting;
     #@ function _Hist2(clip C, string "mode", float "factor", int "tvrange_offset", bool "keepsource")
@@ -406,7 +406,7 @@ global R41_BITMAX = 16 ## max implicit bit depth (float temp. disabled pending m
 
     ### Simple waveform + vectorscope. Accepts 8-bit, YUV(A) only.
     #@ function ScopeY(clip C, bool "shrink", bool "vector", bool "levels",  
-    ##\               bool "bottom", string "mode", bool "labels", int "style", 
+    ##\               bool "bottom", string "mode", bool "labels", int "marks", 
     ##\               bool "audio")
 
     ### print color channel statistics on the screen
@@ -2786,8 +2786,10 @@ function Cropd(clip C, int x, int y, int wid, int hgt, bool "align", int "mod")
 ### switch (or fade) between three [[Resize]] clips depending on scale factor
 ### (overridable with user-specified resizers e.g. nnedi3 etc)
 ### (ScaleZoom sizes by percent; ScaleSize by width and/or height)
+##  (minimum output dimension 8x8)
 ##
 ## @ factor - 0.5 for 50% size, 1.2 for 120%, etc
+##            (minimum output dimension 8x8)
 ##            For examnple, given a 1920x1080 source,
 ##            | ScaleZoom(0.33, 16)
 ##            returns a 640x352 clip.
@@ -2810,9 +2812,11 @@ function ScaleZoom(clip C, float factor, int mod,
 ### switch (or fade) between three [[Resize]] clips depending on scale factor
 ### (overridable with user-specified resizers e.g. nnedi3 etc)
 ### (ScaleZoom sizes by percent; ScaleSize by width and/or height)
+##  (minimum output dimension 8x8)
 ##
 ## @ fwid  - new width
 ## @ fhgt  - new height
+##             (minimum output dimension 8x8)
 ##             (if 'fwid' <= 0, it is calculated from 'fhgt' and aspect ratio)
 ##             (if 'fhgt' <= 0, it is calculated from 'fwid' and aspect ratio)
 ##             (if both <= 0, an error is raised)
@@ -2889,6 +2893,9 @@ function ScaleSize(clip C, float fwid, float fhgt, int mod,
     mwid = Max(mdd, Round(fwid/mdd)*mdd) ## modulo-restricted width, height   
     mhgt = Max(mdd, Round(fhgt/mdd)*mdd) 
     
+    Assert(mwid>=8 && mhgt>=8,
+    \   "ScaleSize: final width and height must be >= 8")
+
     adjX = (Float(mwid)-fwid)/fx ## pre-crop (crop before resize) 
     adjY = (Float(mhgt)-fhgt)/fy
 
@@ -3705,12 +3712,12 @@ function Grayramp(clip T, int "height", bool "zigs", bool "ontop", bool "onside"
 ## @ matrix - determines RGB conversion (if needed)
 ## @ bottom - if true, put scope in lower-right; else (default) put in upper-right
 ## @ labels - if true (default), add axis labels
-## @ style  - graticule mark reference: 
-##            0=none; 1=ColorBars/601 (default); 2=ColorBars/709; 3=ColorbarsHD
+## @ marks  - color bar reference mark (graticule) layout: 
+##            0=none (default); 1=ColorBars/601; 2=ColorBars/709; 3=ColorbarsHD
 ## @ audio  - if true, add audio levels and lissajous meters
 ##
 function Vector2(clip C, string "mode", string "matrix", bool "bottom", 
-\               bool "labels", int "style", bool "audio")
+\               bool "labels", int "marks", bool "audio")
 {
     Assert(C.Height>=260,
     \   "Vector2: source clip minimum height = 260")
@@ -3718,7 +3725,7 @@ function Vector2(clip C, string "mode", string "matrix", bool "bottom",
     modes  = Default(mode, "color")    
     bottom = Default(bottom, false)
     labels = Default(labels, true)
-    style  = Default(style, 1)
+    marks  = Default(marks, 0)
     audio  = Default(audio, false)
     bits   = C.BitsPerComponent
     C
@@ -3760,7 +3767,7 @@ function Vector2(clip C, string "mode", string "matrix", bool "bottom",
 
     if (labels) {
         Lbls = C.vector_labels(colors=1>0)
-        Mrks = C.vector_marks(style=style)
+        Mrks = C.vector_marks(style=marks)
         Overlay(Lbls, mask=Lbls.ExtractA)
         Overlay(Mrks, mask=Mrks.ExtractA, mode="lighten", opacity=0.5)
     }
@@ -3808,6 +3815,11 @@ function Vector2(clip C, string "mode", string "matrix", bool "bottom",
 ## @ colors - if true, label axes plus the six major colors; else axes only (default)
 ##
 ## @ returns black clip with labels: RGBA with mask on A channel, no audio
+##
+## @ Example usage
+## | Histogram("color2").Crop(...).FlipVertical
+## | Lbls = vector_labels(...)
+## | Overlay(Lbls, mask=Lbls.ExtractA)
 ##
 function vector_labels(clip T, int "bits", bool "colors")
 {
@@ -3867,8 +3879,8 @@ function vector_labels(clip T, int "bits", bool "colors")
 ## @ bits   - determines resulting clip size; cf. Histogram:bits; 
 ##            size = 256 (bits=8, default and fallback); 512 (bits=9); 
 ##            1024 (bits=10); 2048 (bits=11); 4096 (bits=12)
-## @ style  - graticule mark reference: 
-##            0=none; 1=ColorBars/601 (default); 2=ColorBars/709; 3=ColorbarsHD
+## @ style  - color bar reference mark (graticule) layout: 
+##            0=none (default); 1=ColorBars/601; 2=ColorBars/709; 3=ColorbarsHD
 ##
 ## @ returns black clip with labels: RGBA with mask on A channel, no audio
 ##
@@ -3880,7 +3892,7 @@ function vector_labels(clip T, int "bits", bool "colors")
 function vector_marks(clip T, int "bits", int "style")
 {
     bits   = Default(bits, 8)
-    style  = Max(0, Default(style, 1))
+    style  = Max(0, Default(style, 0))
     dims   = (bits==12) ? 4096
     \      : (bits==11) ? 2048
     \      : (bits==10) ? 1024
@@ -3973,8 +3985,8 @@ function HistogramTurn(clip C, bool "parade", bool "shrink", bool "bottom")
 ## @ bottom - if true, put scopes below video (default false)
 ## @ mode   - vectorscope mode, "color" or "color2"; default "color"
 ## @ labels - if true (default), add axis labels
-## @ style  - graticule mark reference: 
-##            0=none; 1=ColorBars/601 (default); 2=ColorBars/709; 3=ColorbarsHD
+## @ marks  - color bar reference mark (graticule) layout: 
+##            0=none (default); 1=ColorBars/601; 2=ColorBars/709; 3=ColorbarsHD
 ## @ audio  - if true, add audio levels and lissajous meters
 ##
 ## version 2017-05-09 support RGB, deep color
@@ -3982,7 +3994,7 @@ function HistogramTurn(clip C, bool "parade", bool "shrink", bool "bottom")
 ##
 function ScopeR(clip C, bool "shrink", bool "vector", string "matrix", 
 \               bool "parade", bool "bottom", string "mode", 
-\               bool "labels", int "style", bool "audio")
+\               bool "labels", int "marks", bool "audio")
 {
     Assert(C.Height>=260,
     \   "ScopeR: source clip minimum height = 260")
@@ -3993,7 +4005,7 @@ function ScopeR(clip C, bool "shrink", bool "vector", string "matrix",
     bottom = Default(bottom, false)
     mode   = Default(mode, "color")    
     labels = Default(labels, true)
-    style  = Default(style, 1)
+    marks  = Default(marks, 0)
     audio  = Default(audio, false)
 
     Assert(shrink==false || (C.Width>=360 && C.Height>=360), 
@@ -4036,7 +4048,7 @@ function ScopeR(clip C, bool "shrink", bool "vector", string "matrix",
     \ : StackVertical(R, C)
 
     V = (vector)
-    \ ? C.Vector2(mode, matrix, labels=labels, style=style, audio=audio)
+    \ ? C.Vector2(mode, matrix, labels=labels, marks=marks, audio=audio)
     \    .Crop(C.Width, 0, 0, Min(C.Height, 256))
     \ : Nop
 
@@ -4150,15 +4162,15 @@ function _HistRGB(clip C, bool "parade", bool "keepsource")
 ## @ bottom - if true, put scopes below video (default false)
 ## @ mode   - vectorscope mode, "color" or "color2"; default "color"
 ## @ labels - if true (default), add axis labels
-## @ style  - graticule mark reference: 
-##            0=none; 1=ColorBars/601 (default); 2=ColorBars/709; 3=ColorbarsHD
+## @ marks  - color bar reference mark (graticule) layout: 
+##            0=none (default); 1=ColorBars/601; 2=ColorBars/709; 3=ColorbarsHD
 ## @ audio  - if true, add audio levels and lissajous meters
 ##
 ## * Smaller heights are faster to process; scopes look relatively bigger; 
 ##   (at height=512, scopes occupy the bottom half of the output; at 720, about 1/3; at 1080, 1/4)
 ##
 function ScopeY(clip C, bool "shrink", bool "vector", bool "levels",  
-\               bool "bottom", string "mode", bool "labels", int "style", 
+\               bool "bottom", string "mode", bool "labels", int "marks", 
 \               bool "audio")
 {
     Assert(IsClip(C) && (C.IsYUV || C.IsYUVA), 
@@ -4174,7 +4186,7 @@ function ScopeY(clip C, bool "shrink", bool "vector", bool "levels",
     bottom = Default(bottom, false)
     mode   = Default(mode, "color")    
     labels = Default(labels, true)
-    style  = Default(style, 1)
+    marks  = Default(marks, 0)
     audio  = Default(audio, false)
 
     Assert(C.Width>=96 && C.Height>=96, 
@@ -4206,7 +4218,7 @@ function ScopeY(clip C, bool "shrink", bool "vector", bool "levels",
     \ ? (!levels) 
     \     ? Last 
     \     : AddBorders(0, 0, R41_HISTX, 0) 
-    \ : Vector2(mode, bottom=(bottom||levels), labels=labels, style=style, audio=audio)
+    \ : Vector2(mode, bottom=(bottom||levels), labels=labels, marks=marks, audio=audio)
 
     ## if bottom=true and vector=false, put levels on bottom
     (!levels) 
