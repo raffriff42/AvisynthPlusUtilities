@@ -32,13 +32,16 @@ global g_vu_dark = ScriptDir + "\VUmeter-blank-09.png" ## dark  BG
 ## @ shownums - default false; if true, show digital readout of peak level (like Histogram)
 ## @ dark     - default false, if true, show white-on-dark-background style meter
 ## @ cal      - set dbfs for "0" VU reading; default -18
-##              (for IEC standard -4VU @ -18dbfs (?), set 'cal' to -22)
+##              (for IEC standard -4VU @ -18dbfs (?), set 'cal' to -14)
+## @ showcal  - default true; if false, do NOT note calibration on VU meter
 ##
 ## @ returns 304x190 clip, RGB32
 ##
-function VUmeter(clip C, string name, bool "showname", bool "showpeak", bool "shownums", bool "dark", float "cal")
+function VUmeter(clip C, string name, bool "showname", bool "showpeak", 
+\               bool "shownums", bool "dark", float "cal", bool "showcal")
 {
     showname = Default(showname, true)
+    showcal  = Default(showcal,  true)
     seval = ("""
     global pxx = Default(showpeak, true)
     global nxx = Default(shownums, false)
@@ -97,7 +100,7 @@ function VUmeter(clip C, string name, bool "showname", bool "showpeak", bool "sh
         yv1 = yv2
         yv2 = (xv0 + xv2)
         \     + 2 * xv1
-        \     + (-0.8800 * yv0)
+        \     + (-0.8750 * yv0)
         \     + ( 1.8271 * yv1)
         alow = yv2
     }
@@ -105,8 +108,7 @@ function VUmeter(clip C, string name, bool "showname", bool "showpeak", bool "sh
     alow = 20.0 * Log10(alow) ## lin to log
 
     ## calibrate: set 0 VU == 'cal' dbfs
-    zfs = -18.0
-    vu_level = alow - zfs/2.0 + 28.7 + cxx
+    vu_level = 2*alow - cxx + 19.5 
 
     amax = AudioMax
     return vu_show(vu_level, (pxx ? amax : 0.0), nxx, dxx)
@@ -129,7 +131,8 @@ function VUmeter(clip C, string name, bool "showname", bool "showpeak", bool "sh
     \       text_color=ctxt, halo_color=cnul)
 
     scal = String(Default(cal,  -18.0), "%0.0f dbfs = 0 VU")
-    Subtitle(scal, size=12, x=24, y=Height-10,
+    (!showcal) ? Last
+    \ : Subtitle(scal, size=12, x=24, y=Height-10,
     \       text_color=ctxt, halo_color=cnul)
     
     return Last
