@@ -31,21 +31,25 @@ global g_vu_dark = ScriptDir + "\VUmeter-blank-09.png" ## dark  BG
 ## @ showpeak - default true; if false, do NOT light peak-sensing "LEDs"
 ## @ shownums - default false; if true, show digital readout of peak level (like Histogram)
 ## @ dark     - default false, if true, show white-on-dark-background style meter
+## @ cal      - set VU reading for a -18dbfs sine wave input; default 0.0
+##              (for IEC standard, set 'cal' = -3, or maybe -4, not sure)
 ##
 ## @ returns 304x190 clip, RGB32
 ##
-function VUmeter(clip C, string name, bool "showname", bool "showpeak", bool "shownums", bool "dark")
+function VUmeter(clip C, string name, bool "showname", bool "showpeak", bool "shownums", bool "dark", float "cal")
 {
     showname = Default(showname, true)
     seval = ("""
     global pxx = Default(showpeak, true)
     global nxx = Default(shownums, false)
     global dxx = Default(dark, false)
+    global cxx = Default(cal,  0.0)
     I = ImageSource(dxx ? g_vu_dark : g_vu_lite)
     """)
     \ .ReplaceStr("pxx", name+"_pxx")
     \ .ReplaceStr("nxx", name+"_nxx")
     \ .ReplaceStr("dxx", name+"_dxx")
+    \ .ReplaceStr("cxx", name+"_cxx")
     Eval(seval)
 
     frnum = C.FrameRateNumerator
@@ -102,7 +106,7 @@ function VUmeter(clip C, string name, bool "showname", bool "showpeak", bool "sh
 
     ## calibrate: set 0 VU == -18 dbfs
     zfs = -18.0
-    vu_level = alow - zfs/2.0 + 10.7
+    vu_level = alow - zfs/2.0 + 10.7 + cal
 
     amax = AudioMax
     return vu_show(vu_level, (pxx ? amax : 0.0), nxx, dxx)
@@ -110,6 +114,7 @@ function VUmeter(clip C, string name, bool "showname", bool "showpeak", bool "sh
     \ .ReplaceStr("pxx", name+"_pxx")
     \ .ReplaceStr("nxx", name+"_nxx")
     \ .ReplaceStr("dxx", name+"_dxx")
+    \ .ReplaceStr("cxx", name+"_cxx")
 
     ScriptClip(I, sscript)
     (FrameRateNumerator==C.FrameRateNumerator) ? Last
