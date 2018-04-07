@@ -22,9 +22,10 @@ global g_vu_lite = ScriptDir + "\VUmeter-blank-05.png" ## white BG
 global g_vu_dark = ScriptDir + "\VUmeter-blank-09.png" ## dark  BG
 
 ##################################
-### show a VU meter for one channel of audio
+### show a VU meter
 ##
 ## @ C        - source of audio, framerate and duration (and nothing else)
+##              (call GetChannel(n) to meter a single channel)
 ## @ name     - a short name; required
 ## @ showname - default true; if false, do NOT show name on VU meter
 ## @ showpeak - default true; if false, do NOT light peak-sensing "LEDs"
