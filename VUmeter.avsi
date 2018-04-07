@@ -31,8 +31,8 @@ global g_vu_dark = ScriptDir + "\VUmeter-blank-09.png" ## dark  BG
 ## @ showpeak - default true; if false, do NOT light peak-sensing "LEDs"
 ## @ shownums - default false; if true, show digital readout of peak level (like Histogram)
 ## @ dark     - default false, if true, show white-on-dark-background style meter
-## @ cal      - set VU reading for a -18dbfs sine wave input; default 0.0
-##              (for IEC standard, set 'cal' = -3, or maybe -4, not sure)
+## @ cal      - set dbfs for "0" VU reading; default -18
+##              (for IEC standard -4VU @ -18dbfs (?), set 'cal' to -22)
 ##
 ## @ returns 304x190 clip, RGB32
 ##
@@ -43,7 +43,7 @@ function VUmeter(clip C, string name, bool "showname", bool "showpeak", bool "sh
     global pxx = Default(showpeak, true)
     global nxx = Default(shownums, false)
     global dxx = Default(dark, false)
-    global cxx = Default(cal,  0.0)
+    global cxx = Default(cal,  -18.0)
     I = ImageSource(dxx ? g_vu_dark : g_vu_lite)
     """)
     \ .ReplaceStr("pxx", name+"_pxx")
@@ -74,9 +74,9 @@ function VUmeter(clip C, string name, bool "showname", bool "showpeak", bool "sh
     ## specs: ballistics
     ## - rising to 99% of "0VU" w/ 1 kHz sine wave for 300 ms
     ## - fall time same as rise time
+    ## - overshoot not less than 1% and not more than 1.5%
     ## (tr ~= 0.35/BW) 
     ## (BW ~= 0.35/tr ~= 1.167 Hz)
-    ## - overshoot not less than 1% and not more than 1.5%
 
     xv0 = 0.0   xv1 = 0.0   xv2 = 0.0
     yv0 = 0.0   yv1 = 0.0   yv2 = 0.0
@@ -104,9 +104,9 @@ function VUmeter(clip C, string name, bool "showname", bool "showpeak", bool "sh
     alow = Max(0.0, alow)
     alow = 20.0 * Log10(alow) ## lin to log
 
-    ## calibrate: set 0 VU == -18 dbfs
+    ## calibrate: set 0 VU == 'cal' dbfs
     zfs = -18.0
-    vu_level = alow - zfs/2.0 + 10.7 + cal
+    vu_level = alow - zfs/2.0 + 28.7 + cxx
 
     amax = AudioMax
     return vu_show(vu_level, (pxx ? amax : 0.0), nxx, dxx)
@@ -117,10 +117,21 @@ function VUmeter(clip C, string name, bool "showname", bool "showpeak", bool "sh
     \ .ReplaceStr("cxx", name+"_cxx")
 
     ScriptClip(I, sscript)
+
     (FrameRateNumerator==C.FrameRateNumerator) ? Last
     \ : ChangeFPS(C)
+
+    ctxt = $707070   ## text
+    cnul = $ff000000 ## transparent color
+
     (!showname) ? Last
-    \ : Subtitle(name, size=36, text_color=$707070, halo_color=$ff000000, x=24, y=100)
+    \ : Subtitle(name, size=36, x=24, y=100, 
+    \       text_color=ctxt, halo_color=cnul)
+
+    scal = String(Default(cal,  -18.0), "%0.0f dbfs = 0 VU")
+    Subtitle(scal, size=12, x=24, y=Height-10,
+    \       text_color=ctxt, halo_color=cnul)
+    
     return Last
 }
 
