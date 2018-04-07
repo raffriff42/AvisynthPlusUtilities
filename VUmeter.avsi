@@ -149,7 +149,7 @@ function vu_show(clip C, float avg, float peak, bool shownums, bool dark)
     ## numeric readout
     anum = Max(-96.0, peak)
     R = (!shownum) ? R
-    \ : R.Subtitle(StrinF(anum, 1), size=28,
+    \ : R.Subtitle(String(anum, "%0.1f"), size=28,
     \         text_color=$808080, halo_color=cnul,
     \         align=3, x=172, y=106)
 
