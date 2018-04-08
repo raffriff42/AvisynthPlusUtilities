@@ -2,6 +2,10 @@
 ## 2018-04-06 raffriff42
 ## 2018-04-08 speedup, drop shadow
 
+## download this script from:
+## https://forum.doom9.org/showthread.php?t=175370
+## https://github.com/raffriff42/AvisynthPlusUtilities
+
 ## requires MinMaxAudio
 ## http://wilbertdijkhof.com/
 ## http://forum.doom9.org/showthread.php?t=127530
@@ -27,7 +31,7 @@ global g_vu_dark = ScriptDir + "\VUmeter-blank-09.png" ## dark  BG
 ##
 ## @ C        - source of audio, framerate and duration (and nothing else)
 ##              (call GetChannel(n) to meter a single channel)
-## @ name     - a short name; required - MUST be a valid AviSynth variable name
+## @ name     - a short name; required - MUST be a valid AviSynth variable name, or "" (empty)
 ##              (suggest "L" for left channel, "R" for right, etc)
 ## @ cal      - set dbfs for "0" VU reading; default -14 
 ##              (aprox. IEC std: -4VU @ -18dbfs)
@@ -35,7 +39,7 @@ global g_vu_dark = ScriptDir + "\VUmeter-blank-09.png" ## dark  BG
 ##            
 ## @ showcal  - default true; if false, do NOT note calibration on VU meter
 ## @ showname - default true; if false, do NOT show name on VU meter
-## @ showpeak - default true; if false, do NOT light peak-sensing "LEDs"
+## @ showpeak - always true
 ## @ shownums - default false; if true, show digital readout of peak level (like Histogram)
 ##
 ## NOTE - all options except 'name' apply to all meters in the script (due to reuse of global variables)
@@ -67,14 +71,14 @@ function VUmeter(clip C, string name, float "cal", bool "dark",
     ## size 304x190
     ## pivot @ 150, 177
 
-    global N_pre = needle_prerender(I, dark)
+    global N_pre = needle_prerender(I, vu_dark)
 #return N_pre
 
     F_pre = 
-    \   face_prerender(I, name, cal, dark, showcal, showname, showpeak, 0)
-    \ + face_prerender(I, name, cal, dark, showcal, showname, showpeak, 1)
-    \ + face_prerender(I, name, cal, dark, showcal, showname, showpeak, 2)
-    \ + face_prerender(I, name, cal, dark, showcal, showname, showpeak, 3)
+    \   face_prerender(I, name, vu_cal, vu_dark, showcal, showname, showpeak, 0)
+    \ + face_prerender(I, name, vu_cal, vu_dark, showcal, showname, showpeak, 1)
+    \ + face_prerender(I, name, vu_cal, vu_dark, showcal, showname, showpeak, 2)
+    \ + face_prerender(I, name, vu_cal, vu_dark, showcal, showname, showpeak, 3)
     Eval("global " + name + "_F_pre = F_pre")
 #return Eval("L_F_pre")
 
@@ -123,9 +127,9 @@ function VUmeter(clip C, string name, float "cal", bool "dark",
 
         ## backgound "faceplate" with prerendered peak LED's
         amax = AudioMax
-        B = (amax>=(-2.0)) ? """ + name + """_F_pre.Trim(3, length=1)
-        \ : (amax>=(-4.0)) ? """ + name + """_F_pre.Trim(2, length=1)
-        \ : (amax>=(-6.0)) ? """ + name + """_F_pre.Trim(1, length=1)
+        B = (amax>(-1.99)) ? """ + name + """_F_pre.Trim(3, length=1)
+        \ : (amax>(-3.99)) ? """ + name + """_F_pre.Trim(2, length=1)
+        \ : (amax>(-5.99)) ? """ + name + """_F_pre.Trim(1, length=1)
         \                  : """ + name + """_F_pre.Trim(0, length=1)
         B = B.Loop(FrameCount)
 
