@@ -1,5 +1,6 @@
 ### analog VU meter emulator 
 ## 2018-04-06 raffriff42
+## 2018-04-08 speedup, drop shadow
 
 ## requires MinMaxAudio
 ## http://wilbertdijkhof.com/
@@ -26,34 +27,33 @@ global g_vu_dark = ScriptDir + "\VUmeter-blank-09.png" ## dark  BG
 ##
 ## @ C        - source of audio, framerate and duration (and nothing else)
 ##              (call GetChannel(n) to meter a single channel)
-## @ name     - a short name; required
+## @ name     - a short name; required - MUST be a valid AviSynth variable name
+##              (suggest "L" for left channel, "R" for right, etc)
+## @ cal      - set dbfs for "0" VU reading; default -14 
+##              (aprox. IEC std: -4VU @ -18dbfs)
+## @ dark     - default false, if true, show white-on-dark-background style meter
+##            
+## @ showcal  - default true; if false, do NOT note calibration on VU meter
 ## @ showname - default true; if false, do NOT show name on VU meter
 ## @ showpeak - default true; if false, do NOT light peak-sensing "LEDs"
 ## @ shownums - default false; if true, show digital readout of peak level (like Histogram)
-## @ dark     - default false, if true, show white-on-dark-background style meter
-## @ cal      - set dbfs for "0" VU reading; default -18
-##              (for IEC standard -4VU @ -18dbfs (?), set 'cal' to -14)
-## @ showcal  - default true; if false, do NOT note calibration on VU meter
+##
+## NOTE - all options except 'name' apply to all meters in the script (due to reuse of global variables)
 ##
 ## @ returns 304x190 clip, RGB32
 ##
-function VUmeter(clip C, string name, bool "showname", bool "showpeak", 
-\               bool "shownums", bool "dark", float "cal", bool "showcal")
+function VUmeter(clip C, string name, float "cal", bool "dark",
+\               bool "showcal", bool "showname", bool "showpeak", bool "shownums")
 {
-    showname = Default(showname, true)
     showcal  = Default(showcal,  true)
-    seval = ("""
-    global pxx = Default(showpeak, true)
-    global nxx = Default(shownums, false)
-    global dxx = Default(dark, false)
-    global cxx = Default(cal,  -18.0)
-    I = ImageSource(dxx ? g_vu_dark : g_vu_lite)
-    """)
-    \ .ReplaceStr("pxx", name+"_pxx")
-    \ .ReplaceStr("nxx", name+"_nxx")
-    \ .ReplaceStr("dxx", name+"_dxx")
-    \ .ReplaceStr("cxx", name+"_cxx")
-    Eval(seval)
+    showname = Default(showname, true)
+    showpeak = Default(showpeak, true)
+    
+    global vu_dark = Default(dark, false)
+    global vu_cal  = Default(cal,  -14.0)
+    global vu_nums = Default(shownums, false)
+
+    I = ImageSource(vu_dark ? g_vu_dark : g_vu_lite)
 
     frnum = C.FrameRateNumerator
     frnum = (C.FrameRate<22.0) ? 3 * frnum
@@ -62,140 +62,216 @@ function VUmeter(clip C, string name, bool "showname", bool "showpeak",
 
     I = I.Trim(0, length=1)
     \    .Loop(C.FrameCount)
-    \    .AssumeFPS(frnum, C.FrameRateDenominator)
+    \    .ChangeFPS(frnum, C.FrameRateDenominator)
     \    .AudioDub(C)
     ## size 304x190
     ## pivot @ 150, 177
 
-    sscript = ("""
-    ## specs: analog levels
-    ## - Reference Level (typically +4dBu, valid with tones only)
-    ## - Standard Output Level (10dB above Reference, typical peak levels)
-    ## - Clip Level (6dB above Standard Output Level, "headroom")
-    ## - average (sqrt of rms)
+    global N_pre = needle_prerender(I, dark)
+#return N_pre
 
-    ## specs: ballistics
-    ## - rising to 99% of "0VU" w/ 1 kHz sine wave for 300 ms
-    ## - fall time same as rise time
-    ## - overshoot not less than 1% and not more than 1.5%
-    ## (tr ~= 0.35/BW) 
-    ## (BW ~= 0.35/tr ~= 1.167 Hz)
+    F_pre = 
+    \   face_prerender(I, name, cal, dark, showcal, showname, showpeak, 0)
+    \ + face_prerender(I, name, cal, dark, showcal, showname, showpeak, 1)
+    \ + face_prerender(I, name, cal, dark, showcal, showname, showpeak, 2)
+    \ + face_prerender(I, name, cal, dark, showcal, showname, showpeak, 3)
+    Eval("global " + name + "_F_pre = F_pre")
+#return Eval("L_F_pre")
 
-    xv0 = 0.0   xv1 = 0.0   xv2 = 0.0
-    yv0 = 0.0   yv1 = 0.0   yv2 = 0.0
-    alow = 0.0 ## lowpass result
-    for (n=(-16), 0) {
-        afrm = Slip(n).AudioRMS
-        afrm = Pow(10.0, afrm/20.0) ## log to lin
-        afrm = Pow(afrm, 0.5)       ## rms to avg
+    ScriptClip(I, """
+        ## specs: analog levels
+        ## - Reference Level (typically +4dBu, valid with tones only)
+        ## - Standard Output Level (10dB above Reference, typical peak levels)
+        ## - Clip Level (6dB above Standard Output Level, "headroom")
+        ## - average (sqrt of rms)
 
-        ## Digital filter designed by mkfilter/mkshape/gencode A.J. Fisher
-        ## Command line: /www/usr/fisher/helpers/
-        ##    mkfilter -Bu -Lp -o 2 -a 1.9500000000e-02 0.0000000000e+00 -l 
-        ## (manually tweaked to obtain overshoot)
-        xv0 = xv1
-        xv1 = xv2
-        xv2 = afrm / 289.849123
-        yv0 = yv1
-        yv1 = yv2
-        yv2 = (xv0 + xv2)
-        \     + 2 * xv1
-        \     + (-0.8750 * yv0)
-        \     + ( 1.8271 * yv1)
-        alow = yv2
-    }
-    alow = Max(0.0, alow)
-    alow = 20.0 * Log10(alow) ## lin to log
+        ## specs: ballistics
+        ## - rising to 99% of "0VU" w/ 1 kHz sine wave for 300 ms
+        ## - fall time same as rise time
+        ## - overshoot not less than 1% and not more than 1.5%
+        ## (tr ~= 0.35/BW) 
+        ## (BW ~= 0.35/tr ~= 1.167 Hz)
 
-    ## calibrate: set 0 VU == 'cal' dbfs
-    vu_level = 2*alow - cxx + 19.5 
+        xv0 = 0.0   xv1 = 0.0   xv2 = 0.0
+        yv0 = 0.0   yv1 = 0.0   yv2 = 0.0
+        alow = 0.0 ## lowpass result
+        for (n=(-16), 0) {
+            afrm = Slip(n).AudioRMS
+            afrm = Pow(10.0, afrm/20.0) ## log to lin
+            afrm = Pow(afrm, 0.5)       ## rms to avg
 
-    amax = AudioMax
-    return vu_show(vu_level, (pxx ? amax : 0.0), nxx, dxx)
+            ## Digital filter designed by mkfilter/mkshape/gencode A.J. Fisher
+            ## Command line: /www/usr/fisher/helpers/
+            ##    mkfilter -Bu -Lp -o 2 -a 1.95e-02 0.0 -l 
+            ## (manually tweaked to obtain overshoot)
+            xv0 = xv1
+            xv1 = xv2
+            xv2 = afrm / 289.849123
+            yv0 = yv1
+            yv1 = yv2
+            yv2 = (xv0 + xv2)
+            \     + 2 * xv1
+            \     + (-0.8750 * yv0)
+            \     + ( 1.8271 * yv1)
+            alow = yv2
+        }
+        alow = Max(0.0, alow)
+        alow = 20.0 * Log10(alow) ## lin to log
+
+        ## calibrate: set 0 VU == 'cal' dbfs
+        vu_level = 2*alow - vu_cal + 19.5 
+
+        ## backgound "faceplate" with prerendered peak LED's
+        amax = AudioMax
+        B = (amax>=(-2.0)) ? """ + name + """_F_pre.Trim(3, length=1)
+        \ : (amax>=(-4.0)) ? """ + name + """_F_pre.Trim(2, length=1)
+        \ : (amax>=(-6.0)) ? """ + name + """_F_pre.Trim(1, length=1)
+        \                  : """ + name + """_F_pre.Trim(0, length=1)
+        B = B.Loop(FrameCount)
+
+        return vu_show(B, vu_level, amax, vu_nums)
     """)
-    \ .ReplaceStr("pxx", name+"_pxx")
-    \ .ReplaceStr("nxx", name+"_nxx")
-    \ .ReplaceStr("dxx", name+"_dxx")
-    \ .ReplaceStr("cxx", name+"_cxx")
-
-    ScriptClip(I, sscript)
 
     (FrameRateNumerator==C.FrameRateNumerator) ? Last
     \ : ChangeFPS(C)
+    return Last.Trim(0, length=C.FrameCount)
+}
 
-    ctxt = $707070   ## text
-    cnul = $ff000000 ## transparent color
+##################################
+function vu_show(clip B, float avg, float peak, bool shownums)
+{
+    aavg   = Float(Min(Max(-40, avg), 20))
+    apeak  = peak
+    cnul   = $ff000000 ## transparent color
 
-    (!showname) ? Last
-    \ : Subtitle(name, size=36, x=24, y=100, 
-    \       text_color=ctxt, halo_color=cnul)
+    B
+    ## numeric readout
+    anum = Max(-96.0, peak)
+    (!shownums) ? Last
+    \ : Subtitle(String(anum, "%0.1f"), size=28,
+    \       text_color=$808080, halo_color=cnul,
+    \       align=3, x=172, y=106)
 
-    scal = String(Default(cal,  -18.0), "%0.0f dbfs = 0 VU")
-    (!showcal) ? Last
-    \ : Subtitle(scal, size=12, x=24, y=Height-10,
-    \       text_color=ctxt, halo_color=cnul)
+    ## VU needle prerender
+    ## (frame 0: 55deg left; frame 55: 0deg; frame 110: 55deg right)
+    N = N_pre.Trim(-Round(db_to_deflection(aavg))+55, length=1)
     
+    Overlay(N, mask=N.ShowAlpha)
     return Last
 }
 
 ##################################
-function vu_show(clip C, float avg, float peak, bool shownums, bool dark)
+### creates an RGB32 animation of needle deflection
+##
+## frame 0: 55deg left; frame 55: 0deg; frame 110: 55deg right
+##
+function needle_prerender(clip C, bool dark)
 {
-    aavg    = Float(Min(Max(-40, avg), 20))
-    apeak   = peak
-    shownum = shownums
-    #dark    = dark
+    BlankClip(C, pixel_type="RGB32", color=$0)
+    Animate(0, 110, "needle", 
+    \   -55, dark, 
+    \   55, dark)
+    return Trim(0, length=111) #.ShowAlpha
 
-    cpt1 = (dark ? $c04040 : $0)        ## pointer color
-    cpt2 = transparent_color(0.5, cpt1) ## pointer border
+    function needle(clip C, int angle, bool dark)
+    {
+        pivx = 150 ## pivot point
+        pivy = 177 ##    ' ' 
+        offx = 4   ## shadow offset
+        offy = 2   ##    ' '
+
+        cpt1 = (dark ? $c04040 : $0)        ## pointer color
+        cpt2 = transparent_color(0.5, cpt1) ## pointer border
+        cnul = $ff000000                    ## transparent
+
+        ## needle
+        N = C.subtitle_alpha("l", 
+        \         size=210, font_width=3, align=5, x=pivx, y=pivy,
+        \         text_color=cpt1, halo_color=cpt2,
+        \         font_angle=Float(-angle))
+        
+        ## drop shadow
+        DS = C.Subtitle("l", 
+        \         size=210, font_width=20, align=5, x=pivx+offx, y=pivy+offy,
+        \         text_color=$0, halo_color=cnul,
+        \         font_angle=Float(-angle))
+        \     .Blur(1.0).Blur(1.0).Blur(1.0)
+
+        ## drop shadow alpha
+        ds_alpha = (dark) ? $454545 : $454545
+        DA = C.BlankClip(pixel_type="YV12")
+        \     .Subtitle("l", 
+        \         size=210, font_width=20, align=5, x=pivx+offx, y=pivy+offy,
+        \         text_color=ds_alpha, halo_color=cnul,
+        \         font_angle=Float(-angle))
+        \     .Blur(1.0).Blur(1.0).Blur(1.0)
+        \     .ColorYUV(levels="TV->PC")
+
+        M = Overlay(
+        \   N.ShowAlpha("YV12"), 
+        \   DA, 
+        \   mode="add")
+
+        N2 = Overlay(DS, N, mode="lighten", mask=M)
+
+        return MergeARGB(M, N2, N2, N2)
+        #\ .Subtitle(String(angle))
+    }
+}
+
+##################################
+### 1-frame clip showing the "faceplate" with selected number of peak LED's lit
+##
+## @ showpeak - always TRUE (to support FALSE, need to create faceplate images without bezels)
+##
+function face_prerender(clip C, string name, float cal, bool dark, 
+\           bool showcal, bool showname, bool showpeak, int peak)
+{
+    ctxt = $707070   ## text
+    cnul = $ff000000 ## transparent color
+
     cred = $e00000   ## LED red
     cyel = $e0e000   ## LED yellow
     coff = $101030   ## LED off
-    cnul = $ff000000 ## transparent color
+
     pksz = 14.0      ## LED size
     fcir = "n"       ## Marlett filled circle
 
-    pivx = 150       ## pivot point, x
-    pivy = 177       ## pivot point, y
-    x1   = 220       ## LED's
+    x1   = 220       ## LED positions
     x2   = x1 + (1 * 22)
     x3   = x1 + (2 * 22)
     y1   = 116.5
     y2   = y1
     y3   = y1
 
-    R = C
+    C
+    ## channel name
+    (!showname) ? Last
+    \ : Subtitle(name, size=36, x=24, y=100, 
+    \       text_color=ctxt, halo_color=cnul)
 
-    ## numeric readout
-    anum = Max(-96.0, peak)
-    R = (!shownum) ? R
-    \ : R.Subtitle(String(anum, "%0.1f"), size=28,
-    \         text_color=$808080, halo_color=cnul,
-    \         align=3, x=172, y=106)
+    ## calibration
+    scal = String(cal, "%0.0f dbfs = 0 VU")
+    (!showcal) ? Last
+    \ : Subtitle(scal, size=12, x=24, y=Height-12,
+    \       text_color=ctxt, halo_color=cnul)
 
     ## peak indicators     
-    R = (peak<(-6)) ? R 
-    \ : R.Subtitle(fcir, font="Marlett", size=pksz,
-    \         text_color=cyel, halo_color=cnul,
-    \         x=x1, y=y1, align=5)
+    (peak<1) ? Last
+    \ : Subtitle(fcir, font="Marlett", size=pksz,
+    \       text_color=cyel, halo_color=cnul,
+    \       x=x1, y=y1, align=5)
 
-    R = (peak<(-4)) ? R 
-    \ : R.Subtitle(fcir, font="Marlett", size=pksz,
-    \         text_color=cyel, halo_color=cnul,
-    \         x=x2, y=y2, align=5)
+    (peak<2) ? Last
+    \ : Subtitle(fcir, font="Marlett", size=pksz,
+    \       text_color=cyel, halo_color=cnul,
+    \       x=x2, y=y2, align=5)
 
-    R = (peak<(-2)) ? R 
-    \ : R.Subtitle(fcir, font="Marlett", size=pksz,
-    \         text_color=cred, halo_color=cnul,
-    \         x=x3, y=y3, align=5)
-
-    ## VU needle
-    R = R.Subtitle("l", 
-    \         size=210, font_width=3, align=5, x=pivx, y=pivy,
-    \         text_color=cpt1, halo_color=cpt2,
-    \         font_angle=db_to_deflection(aavg))
-
-    return R
+    (peak<3) ? Last
+    \ : Subtitle(fcir, font="Marlett", size=pksz,
+    \       text_color=cred, halo_color=cnul,
+    \       x=x3, y=y3, align=5)
+    return Trim(0, length=1)
 }
 
 ##################################
@@ -220,6 +296,67 @@ function db_to_deflection(float dblevel)
     \     20, -55, 
     \    cubic=false)
 }
+
+##################################
+### Like Subtitle, but with alpha information
+## All arguments are identical to Subtitle, except:
+## @ C          - must be RGB32
+## @ halo_width - if < 1, halo is disabled;
+##                 if >= 1, same as standard Subtitle halo. 
+##                 (default = 1)
+##
+## @ returns RGB32 subtitle with mask channel
+##
+function subtitle_alpha(clip C, string text, float "x", float "y", 
+\                int "first_frame", int "last_frame", 
+\                string "font", int "size",
+\                int "text_color", int "halo_color", 
+\                int "align", int "spc", int "lsp", 
+\                float "font_width", float "font_angle",
+\                bool "interlaced", int "halo_width") 
+{
+    Assert(C.IsRGB32, 
+    \   "subtitle_alpha: source clip must be RGB32") 
+
+    text_color  = Default(text_color, $ffff00)
+    halo_color  = Default(halo_color, $0)
+    halo_width  = Default(halo_width, 1)
+
+    text_alpha = text_color.BitRShiftU(24).BitAnd($ff)
+    halo_alpha = halo_color.BitRShiftU(24).BitAnd($ff)
+
+    R = C.Subtitle(text, x, y, first_frame, last_frame, 
+    \           font, size, text_color, halo_color, align, 
+    \           spc, lsp, font_width, font_angle, interlaced)
+
+    text_color  = MakeRGBA(text_alpha, text_alpha, text_alpha, $0)
+    halo_color  = MakeRGBA(halo_alpha, halo_alpha, halo_alpha, $0)
+    
+    M = C.BlankClip(pixel_type="YV12")
+    \    .Subtitle(text, x, y, first_frame, last_frame,
+    \           font, size, $ffffff, (halo_width<1 ? $0 : $ffffff), align, 
+    \           spc, lsp, font_width, font_angle, interlaced)
+    \    .ColorYUV(levels="TV->PC")
+
+    return MergeARGB(M, R, R, R)
+}
+
+#######################################
+### given 'R', 'G', 'B', 'A' return an Avisynth color
+##
+function MakeRGBA(int r, int g, int b, int a) {
+
+    r = Min(Max(0, r), 255)
+    g = Min(Max(0, g), 255)
+    b = Min(Max(0, b), 255)
+    a = Min(Max(0, a), 255)
+
+    return   a.BitLShift(24)
+    \ .BitOr(r.BitLShift(16))
+    \ .BitOr(g.BitLShift(8))
+    \ .BitOr(b)
+}
+
 
 ## Library functions from Utils-r41.avsi
 ## https://raw.githubusercontent.com/raffriff42/AvisynthPlusUtilities/master/Utils-r41.avsi
@@ -254,5 +391,4 @@ function transparent_color(float a, int color) {
     return BitOr(a.BitLShift(24), BitAnd(color, $ffffff))
 }
 
-####
-
+#####
