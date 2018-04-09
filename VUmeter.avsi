@@ -24,8 +24,8 @@
 ## http://www-users.cs.york.ac.uk/~fisher/mkfilter
 
 global g_vu_dark = ScriptDir + "\VUmeter-blank-09.png" ## dark  BG
-global g_vu_lite = ScriptDir + "\VUmeter-blank-11.png" ## white BG
-#global g_vu_lite = ScriptDir + "\VUmeter-blank-05.png" ## white (vuplayer.com)
+global g_vu_lite = ScriptDir + "\VUmeter-blank-05.png" ## white (vuplayer.com)
+#global g_vu_lite = ScriptDir + "\VUmeter-blank-11.png" ## white BG (alt.)
 
 ##################################
 ### show a VU meter
@@ -71,18 +71,20 @@ function VUmeter(clip C, string name, float "cal", bool "dark",
     \    .AudioDub(C)
     ## size 304x190
     ## pivot @ 150, 177
-    Assert(IsClip(I), "VUmeter: internal error 3")
+    Assert(IsClip(I), 
+    \   "VUmeter: internal error 10")
 
     global N_pre = needle_prerender(I, vu_dark)
-    Assert(IsClip(N_pre), "VUmeter: internal error 4")
-#return N_pre
+    Assert(IsClip(N_pre), 
+    \   "VUmeter: internal error 20")
 
     F_pre = 
     \   face_prerender(I, name, vu_cal, vu_dark, showcal, showname, showpeak, 0)
     \ + face_prerender(I, name, vu_cal, vu_dark, showcal, showname, showpeak, 1)
     \ + face_prerender(I, name, vu_cal, vu_dark, showcal, showname, showpeak, 2)
     \ + face_prerender(I, name, vu_cal, vu_dark, showcal, showname, showpeak, 3)
-    Assert(IsClip(F_pre), "VUmeter: internal error 5")
+    Assert(IsClip(F_pre), 
+    \   "VUmeter: internal error 30")
     Eval("global " + name + "_F_pre = F_pre")
 #return Eval("L_F_pre")
 
@@ -100,7 +102,8 @@ function VUmeter(clip C, string name, float "cal", bool "dark",
         ## (tr ~= 0.35/BW) 
         ## (BW ~= 0.35/tr ~= 1.167 Hz)
 
-        Assert(IsClip, "VUmeter: internal error 7")
+        Assert(IsClip, 
+        \   "VUmeter: internal error 40")
         xv0 = 0.0   xv1 = 0.0   xv2 = 0.0
         yv0 = 0.0   yv1 = 0.0   yv2 = 0.0
         alow = 0.0 ## lowpass result
@@ -132,49 +135,47 @@ function VUmeter(clip C, string name, float "cal", bool "dark",
 
         ## backgound "faceplate" with prerendered peak LED's
         amax = AudioMax
+        amax = Max(-96.0, amax)
         B = (amax>(-1.99)) ? """ + name + """_F_pre.Trim(3, length=1)
         \ : (amax>(-3.99)) ? """ + name + """_F_pre.Trim(2, length=1)
         \ : (amax>(-5.99)) ? """ + name + """_F_pre.Trim(1, length=1)
         \                  : """ + name + """_F_pre.Trim(0, length=1)
-        B = B.Loop(FrameCount)
+        B.Loop(FrameCount)
+        Assert(IsClip, 
+        \   "VUmeter: internal error 50")
 
-        Assert(IsClip(B), "VUmeter: internal error 8")
-        return vu_show(B, vu_level, amax, vu_nums)
+        ## numeric readout
+        cnul = $ff000000 ## transparent color
+        (!vu_nums) ? Last
+        \ : Subtitle(String(amax, "%0.1f"), size=28,
+        \       text_color=$808080, halo_color=cnul,
+        \       align=3, x=172, y=106)
+
+        ## VU needle
+        aavg = Float(Min(Max(-40, vu_level), 20))
+        N = N_pre.Trim(-Round(db_to_deflection(aavg))+55, length=1)
+        Assert(IsClip(N), 
+        \   "VUmeter: internal error 60")
+
+        R = Overlay(N, mask=N.ShowAlpha)
+        Assert(IsClip(R), 
+        \   "VUmeter: internal error 70")
+        return R 
     """)
 
-    Assert(IsClip, "VUmeter: internal error 9")
+    Assert(IsClip, 
+    \   "VUmeter: internal error 90")
     (FrameRateNumerator==C.FrameRateNumerator) ? Last
     \ : ChangeFPS(C)
     return Last.Trim(0, length=C.FrameCount)
 }
 
 ##################################
-function vu_show(clip B, float avg, float peak, bool shownums)
-{
-    aavg   = Float(Min(Max(-40, avg), 20))
-    apeak  = peak
-    cnul   = $ff000000 ## transparent color
-
-    B
-    ## numeric readout
-    anum = Max(-96.0, peak)
-    (!shownums) ? Last
-    \ : Subtitle(String(anum, "%0.1f"), size=28,
-    \       text_color=$808080, halo_color=cnul,
-    \       align=3, x=172, y=106)
-
-    ## VU needle prerender
-    ## (frame 0: 55deg left; frame 55: 0deg; frame 110: 55deg right)
-    N = N_pre.Trim(-Round(db_to_deflection(aavg))+55, length=1)
-    
-    Overlay(N, mask=N.ShowAlpha)
-    return Last
-}
-
-##################################
-### creates an RGB32 animation of needle deflection
+### creates an RGB32 animation of needle deflection for later use
 ##
-## frame 0: 55deg left; frame 55: 0deg; frame 110: 55deg right
+## frame   0: 55deg left;
+## frame  55: 0deg; 
+## frame 110: 55deg right
 ##
 function needle_prerender(clip C, bool dark)
 {
@@ -189,7 +190,7 @@ function needle_prerender(clip C, bool dark)
         pivx = 150 ## pivot point
         pivy = 177 ##    ' ' 
         offx = 2   ## shadow offset
-        offy = 6   ##    ' '
+        offy = 5   ##    ' '
 
         cpt1 = (dark ? $c04040 : $0)        ## pointer color
         cpt2 = transparent_color(0.5, cpt1) ## pointer border
@@ -231,9 +232,9 @@ function needle_prerender(clip C, bool dark)
 }
 
 ##################################
-### 1-frame clip showing the "faceplate" with selected number of peak LED's lit
+### "faceplate" with selected number of peak LED's lit for later use
 ##
-## @ showpeak - always TRUE (to support FALSE, need to create faceplate images without bezels)
+## @ showpeak - always TRUE (to support FALSE, need to create faceplate images without LEDs)
 ##
 function face_prerender(clip C, string name, float cal, bool dark, 
 \           bool showcal, bool showname, bool showpeak, int peak)
@@ -286,7 +287,8 @@ function face_prerender(clip C, string name, float cal, bool dark,
 }
 
 ##################################
-## dB to deflection angle (HACK)
+### VU scale dB to approximate deflection angle
+##
 function db_to_deflection(float dblevel)
 {
     return Spline(dblevel, 
@@ -310,6 +312,7 @@ function db_to_deflection(float dblevel)
 
 ##################################
 ### Like Subtitle, but with alpha information
+##
 ## All arguments are identical to Subtitle, except:
 ## @ C          - must be RGB32
 ## @ halo_width - if < 1, halo is disabled;
