@@ -1,6 +1,6 @@
 ### analog VU meter emulator 
 ## 2018-04-06 raffriff42
-## 2018-04-08 speedup, drop shadow
+## 2018-04-08 speedup, drop shadow, Asserts
 
 ## download this script from:
 ## https://forum.doom9.org/showthread.php?t=175370
@@ -23,8 +23,9 @@
 ## Digital filter designed by mkfilter/mkshape/gencode
 ## http://www-users.cs.york.ac.uk/~fisher/mkfilter
 
-global g_vu_lite = ScriptDir + "\VUmeter-blank-05.png" ## white BG
 global g_vu_dark = ScriptDir + "\VUmeter-blank-09.png" ## dark  BG
+global g_vu_lite = ScriptDir + "\VUmeter-blank-11.png" ## white BG
+#global g_vu_lite = ScriptDir + "\VUmeter-blank-05.png" ## white (vuplayer.com)
 
 ##################################
 ### show a VU meter
@@ -70,8 +71,10 @@ function VUmeter(clip C, string name, float "cal", bool "dark",
     \    .AudioDub(C)
     ## size 304x190
     ## pivot @ 150, 177
+    Assert(IsClip(I), "VUmeter: internal error 3")
 
     global N_pre = needle_prerender(I, vu_dark)
+    Assert(IsClip(N_pre), "VUmeter: internal error 4")
 #return N_pre
 
     F_pre = 
@@ -79,6 +82,7 @@ function VUmeter(clip C, string name, float "cal", bool "dark",
     \ + face_prerender(I, name, vu_cal, vu_dark, showcal, showname, showpeak, 1)
     \ + face_prerender(I, name, vu_cal, vu_dark, showcal, showname, showpeak, 2)
     \ + face_prerender(I, name, vu_cal, vu_dark, showcal, showname, showpeak, 3)
+    Assert(IsClip(F_pre), "VUmeter: internal error 5")
     Eval("global " + name + "_F_pre = F_pre")
 #return Eval("L_F_pre")
 
@@ -96,6 +100,7 @@ function VUmeter(clip C, string name, float "cal", bool "dark",
         ## (tr ~= 0.35/BW) 
         ## (BW ~= 0.35/tr ~= 1.167 Hz)
 
+        Assert(IsClip, "VUmeter: internal error 7")
         xv0 = 0.0   xv1 = 0.0   xv2 = 0.0
         yv0 = 0.0   yv1 = 0.0   yv2 = 0.0
         alow = 0.0 ## lowpass result
@@ -133,9 +138,11 @@ function VUmeter(clip C, string name, float "cal", bool "dark",
         \                  : """ + name + """_F_pre.Trim(0, length=1)
         B = B.Loop(FrameCount)
 
+        Assert(IsClip, "VUmeter: internal error 8")
         return vu_show(B, vu_level, amax, vu_nums)
     """)
 
+    Assert(IsClip, "VUmeter: internal error 9")
     (FrameRateNumerator==C.FrameRateNumerator) ? Last
     \ : ChangeFPS(C)
     return Last.Trim(0, length=C.FrameCount)
@@ -181,8 +188,8 @@ function needle_prerender(clip C, bool dark)
     {
         pivx = 150 ## pivot point
         pivy = 177 ##    ' ' 
-        offx = 4   ## shadow offset
-        offy = 2   ##    ' '
+        offx = 2   ## shadow offset
+        offy = 6   ##    ' '
 
         cpt1 = (dark ? $c04040 : $0)        ## pointer color
         cpt2 = transparent_color(0.5, cpt1) ## pointer border
