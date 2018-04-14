@@ -1,10 +1,13 @@
-### basic utility functions; most require AVS+
+### basic utility functions for AVS+
 ##
 ## wiki page (incomplete at this time):
 ##   http://avisynth.nl/index.php/User:Raffriff42/Utils-r41_Quick_Reference
 ## download latest:
 ##   http://avisynth.nl/images/Utils-r41.avsi
 ##   https://raw.githubusercontent.com/raffriff42/AvisynthPlusUtilities/master/Utils-r41.avsi
+##
+## Requires MaskTools 2.2.x
+##   http://avisynth.nl/index.php/MaskTools2
 ##
 ## Version history:
 ## v0.41    (2017-05-13) raffriff42
@@ -48,6 +51,9 @@
 ## v2018-03-09 rename Levelsc -> Levelss; drop LevelsPlus
 ## v2018-03-13 minor bugfixes
 ## v2018-03-29 SoftLimiter2, improved Vector2, vector_marks:style
+## v2018-04-12 CropToAspect, ExpandToAspect 
+## v2018-04-14 (moved from -r42) CropPanTilt, CropShift, MergeLH, GammaCurves, SoftWipe
+## v2018-04-14 (moved) Shift, ShiftUV, ShiftRedBlue, ChangeSpeed, ChangeAudioSpeed
 
 global R41_HISTX = 264 ## amount classic Histogram adds to clip width (with added borders)
 global R41_BITMAX = 16 ## max implicit bit depth (float temp. disabled pending more tests)
@@ -254,6 +260,12 @@ global R41_BITMAX = 16 ## max implicit bit depth (float temp. disabled pending m
     ##\              string "RLevels", string "GLevels", string "BLevels",  
     ##\              float "defBlk", float "defWht", bool "coring", bool "dither")
 
+    ### 'S'-curve luma adjustment
+    #@ function GammaCurves(clip C, float gamma, float antigamma, bool "tvrange")
+
+    ### merge 'Lo', 'Hi' clips based on clip 'T' luma
+    #@ function MergeLH(clip T, clip Lo, clip Hi, float "lothresh", float "hithresh")
+
     ### [[Layer]] with support for 'mask', 'opacity' and 'align' parameters 
     #@ function LayerAligned(clip base, clip over, string "op", int "level", 
     ##\               clip "mask", float "opacity", int "align")
@@ -277,6 +289,20 @@ global R41_BITMAX = 16 ## max implicit bit depth (float temp. disabled pending m
 
     ### "slip" (advance or delay) a clip in time.
     #@ function Slip(clip C, int offset)
+
+    ### change speed over a wide range
+    #@ function ChangeSpeed(
+    ##\               clip C, float factor, bool "pitchfix", bool "noblend")
+
+    ### audio only: change speed over a wide range 
+    #@ function ChangeAudioSpeed(
+    ##\               clip C, float factor, bool "pitchfix")
+
+    ### Dissolve with a Wipe transition; adjustable soft edge.
+    #@ function SoftWipe(clip A, clip B, float "overlap", 
+    ##\               string "Mode", float "WindowSize",
+    ##\               float "HardnessStart", float "HardnessEnd",
+    ##\               bool "showmask")
 
 ### CROP, RESIZE AND TRANSFORM FILTERS
 
@@ -314,6 +340,21 @@ global R41_BITMAX = 16 ## max implicit bit depth (float temp. disabled pending m
     ##\               float "thrSm", float "thrLg", bool "fade", bool "ident", 
     ##\               bool "gamma", bool "hibit")
 
+    ### crop to size with smooth pan & tilt (range -1.0_1.0; center @ 0, 0)
+    #@ function CropPanTilt(clip C, int wid, int hgt, float "panRt", float "tiltDn",
+    ##\               string "title", int "align", int "color", float "size")
+
+    ### crop to size with smooth animated pan & tilt, expressed as pixels (center @ off_x=0, off_y=0)
+    #@ function CropShift(clip C, int wid, int hgt, float "off_x", float "off_y")
+
+    ### crop to given aspect ratio
+    #@ function CropToAspect(clip C, int num, int den, int "mod", 
+    ##\               float "tol", int "align")
+
+    ### expand to given aspect ratio
+    #@ function ExpandToAspect(clip C, int num, int den, int "mod", 
+    ##\               float "tol", int "border", string "mode")
+
     ### crop or expand a clip to ensure it is a certain size (symmetrically by default) 
     #@ function CropEx(clip C, float wid, float hgt, int "mod",   
     ##\               int "align", int "dx", int "dy", bool "debug")
@@ -331,6 +372,19 @@ global R41_BITMAX = 16 ## max implicit bit depth (float temp. disabled pending m
 
     ### quick Gaussian blur
     #@ function QGaussBlur(clip C, float radx, float "rady")
+
+    ### shift a clip up-down and left-right (with sub-pixel precision)
+    #@ function Shift(clip C, float offh, float offv)
+
+    ### shift Chroma relative to Luma
+    #@ function ShiftUV(clip C, float "ux", float "uy", float "vx", float "vy")
+
+    ### shift and/or resize Red and Blue relative to Green
+    #@ function ShiftRedBlue(clip C, 
+    ##\               float "rx", float "ry",
+    ##\               float "bx", float "by",
+    ##\               float "rxd", float "ryd",
+    ##\               float "bxd", float "byd")
 
 ### DEBUGGING FILTERS
 
@@ -2359,6 +2413,87 @@ function LevelssRGB(clip C,
     return Last
 }
 
+## fka 'GammaScurve'
+###################################
+### 'S'-curve luma adjustment
+##
+## @ gamma     - gamma adjustment (more = brighter lowlights)
+## @ antigamma - 'anti-gamma' adjustment (more = darker highlights)
+## @ tvrange   - if true, anchor curve on TV black (16d) and TV white (235d);
+##               default false for RGB source, true for YUV; 
+##               for Y-only sources, if 'tvrange' not specified, an error is raised.
+##
+function GammaCurves(clip C, float gamma, float antigamma, bool "tvrange")
+{
+    Assert(!C.IsY || Defined(tvrange), 
+    \   "GammaScurve: 'tvrange' must be defined for Y-only clips")
+    tvrange = Default(tvrange, !C.IsRGB)
+    C
+    Lo = _GammaCurve(gamma, tvrange)
+    Hi = _AntigammaCurve(antigamma, tvrange)
+    return MergeLH(C, Lo, Hi)
+
+    function _GammaCurve(clip C, float gamma, bool tvrange) {
+        if (tvrange) {
+            return C.Levelss(16, gamma, 235, 16, 235, coring=false, chroma=false)
+        }
+        else {
+            return C.Levelss(0, gamma, 255, 0, 255, coring=false, chroma=false)
+        }
+    }
+
+    function _AntigammaCurve(clip C, float antigamma, bool tvrange) {
+        if (tvrange) {
+            C
+            Invert.ColorYUV(off_y=(-5))
+            Levelss(16, antigamma, 235, 16, 235, coring=false, chroma=false)
+            Invert.ColorYUV(off_y=(-5))
+            return Last
+        }
+        else {
+            C
+            Invert
+            Levelss(2, antigamma, 253, 2, 253, coring=false, chroma=false)
+            Invert
+            return Last
+        }
+    }
+}
+
+#######################################
+### merge 'Lo', 'Hi' clips based on clip 'T' luma
+## can be used for simple luma keying 
+##
+## @ T        - control clip: PC range, color format must match Lo, Hi.
+## @ Lo, Hi   - source clips: properties must be compatible with one another
+## @ lothresh - level to pass 'Lo' clip 100%, default 16d for RGB, 32d for YUV
+## @ hithresh - level to pass 'Hi' clip 100%, default 239d for RGB, 223d for YUV
+## 
+function MergeLH(clip T, clip Lo, clip Hi, float "lothresh", float "hithresh")
+{
+    Assert(Lo.Width==Hi.Width && Lo.Height==Hi.Height
+    \   && Lo.Width==T.Width  && Lo.Height==T.Height,
+    \   "MergeLH: 'Lo', 'Hi' and 'T' height and width must match")
+    Assert(Lo.PixelType==Hi.PixelType
+    \   && Lo.PixelType==T.PixelType,
+    \   "MergeLH: 'Lo', 'Hi' and 'T' color format and bit depth must match")
+
+    lothresh = Default(lothresh, (T.IsRGB ?  16 : 32))
+    hithresh = Default(hithresh, (T.IsRGB ? 239 : 223))
+
+    ##  eq. Min(Max(0, (x-lo)*255/(hi-lo)/255), 1)
+    ##      
+    s = ("x $tlo - 255@d * $thi $tlo - / 255@d / 1 min 0 max A^ "
+    \ +  "1 A - y * A z * + ")
+    \   .ReplaceStr("255@d", "range_size")
+    \   .ReplaceStr("$tlo",  T.sc8s(lothresh))
+    \   .ReplaceStr("$thi",  T.sc8s(hithresh))
+
+    return (Lo.HasAlpha)
+    \ ? Expr(T, Lo, Hi, s, s, s, s, format=Lo.PixelType)
+    \ : Expr(T, Lo, Hi, s, s, s,    format=Lo.PixelType)
+}
+
 ##################################
 ### [[Layer]] with support for 'mask', 'opacity' and 'align' parameters 
 ##
@@ -2668,6 +2803,242 @@ function Slip(clip C, int offset)
     return C
 } 
 
+#######################################
+### change speed over a wide range, 
+### with frame blending in fast forward by default.
+##
+## @ factor - 0.33 for 1/3 speed, etc; 
+##    min = 0.001; max = min([[FrameCount]], 1000) 
+##    (if > FrameCount, duration would be 0);
+##    if argument is out of range, an error occurs.
+##
+## @ pitchfix - if true, maintain audio pitch with speed 
+##    (default false; allow pitch to rise or fall)
+##
+## @ noblend - if true, never blend frames (default false)
+##
+## @ fpsnum, fpsden - output frame rate; default same as 'C'
+##
+## @ v2014-02-24 raffriff42
+## @ v2018-04-14 fpsnum, fpsden
+##
+function ChangeSpeed(clip C, float factor, 
+\               bool "pitchfix", bool "noblend", int "fpsnum", int "fpsden")
+{
+    pitchfix = Default(pitchfix, false)
+    noblend  = Default(noblend, false)
+    fpsnum   = Max(1, Default(fpsnum, C.FrameRateNumerator))
+    fpsden   = Max(1, Default(fpsden, C.FrameRateDenominator))
+
+    Assert(!C.IsYV411 && (C.IsYUV||C.IsYUVA), 
+    \  "ChangeSpeed: RGB, YV411 not accepted") ## (cf. Overlay)
+    Assert(factor>=0.001, 
+    \  "ChangeSpeed bad argument: factor<0.001")
+    Assert(factor<=1000.0, 
+    \  "ChangeSpeed bad argument: factor>1000")
+    Assert(factor<=C.FrameCount, 
+    \  "ChangeSpeed bad argument: factor>FrameCount")
+
+    AS  = C.KillAudio.AssumeFPS(C.FrameRate * factor)
+
+    temprad = Round(0.5 * factor) 
+    TS = (factor<1.0 || temprad==0 || noblend) 
+    \  ? AS 
+    \  : AS.Overlay(
+    \       AS.TemporalSoften(temprad, 255, 255, 48, 2), 
+    \       opacity=0.7)
+
+    R  = (factor<1.5 && noblend==false)  
+    \  ? AS.ConvertFPS(fpsnum, fpsden) 
+    \  : TS.ChangeFPS(fpsnum, fpsden, linear=(factor<10.0))
+
+    return (Abs(factor-1.0) < (0.5/C.FrameCount)) ? C
+    \  : (!C.HasAudio) ? R 
+    \  : R.AudioDub( C.ChangeAudioSpeed(factor, pitchfix) )
+}
+
+#######################################
+### audio only: change speed over a wide range 
+##
+## @ factor - 0.33 for 1/3 speed, etc; 
+##    min = 0.01; max < 1000;
+##    if argument is out of range, an error occurs.
+##
+## @ pitchfix - if true, maintain audio pitch with speed 
+##    (default false; allow pitch to rise or fall)
+##
+## @ v2017-04-11 split from [[ChangeSpeed]]
+## @ v2018-04-14 tweak 'sequence' for slo-mo when correcting pitch
+##
+function ChangeAudioSpeed(
+\               clip C, float factor, bool "pitchfix")
+{
+    Assert(C.HasAudio, 
+    \  "ChangeAudioSpeed bad argument: source has no audio")
+    Assert(factor>=0.01, 
+    \  "ChangeAudioSpeed bad argument: factor < 0.01")
+    Assert(factor<=1000.0, 
+    \  "ChangeAudioSpeed bad argument: factor > 1000")
+
+    pitchfix = Default(pitchfix, false)
+
+    A = (factor > 0.7)
+    \ ? (pitchfix)
+    \    ? C.ConvertAudioToFloat.TimeStretch(tempo = factor*100.0)
+    \    : C.ConvertAudioToFloat.TimeStretch(rate  = factor*100.0)
+    \ : (pitchfix)
+    \    ? C.ConvertAudioToFloat.TimeStretch(tempo = factor*100.0, sequence=50)
+    \    : C.ConvertAudioToFloat.TimeStretch(rate  = factor*100.0)
+
+    R = (Abs(factor-1.0) < 0.0001) ? C
+    \ : (C.AudioDuration/factor < 0.001) ? C.AudioTrim(0.0, length=0.0)
+    \ : (C.AudioBits==32) ? A.ConvertAudioTo32bit
+    \ : (C.AudioBits==24) ? A.ConvertAudioTo24bit
+    \ : (C.AudioBits==16) ? A.ConvertAudioTo16bit
+    \ : (C.AudioBits==8)  ? A.ConvertAudioTo8bit
+    \ : A ## (==float)
+
+    return (factor > 0.99) ? R 
+    \ : R.AudioTrim(0.0, length=C.AudioDuration)
+}
+
+# https://forum.videohelp.com/threads/387798-Add-transition-to-overlay-in-AviSynth#post2510235
+##################################
+### Dissolve with a Wipe transition; adjustable soft edge.
+##
+## @ A            - starting clip 
+## @ B            - ending clip
+## @ overlap      - overlapped frames; if negative, overlapped seconds
+## @ Mode         - (LeftToRight|RightToLeft|TopToBottom|BottomToTop)
+## @ Hardness      - 2=soft; 10=medium; 100=hard; default 2
+## @ HardnessStart - 1=blur; 100=sharp; default 50
+## @ HardnessEnd   - 1=blur; 100=sharp; default 50
+##
+function SoftWipe(clip A, clip B, float "overlap", 
+\               string "Mode", float "Hardness",
+\               float "HardnessStart", float "HardnessEnd",
+\               bool "showmask")
+{
+    Assert(!A.IsYV411, 
+    \  "SoftWipe: clip 'A' is YV411 (not accepted)") ## (cf. Overlay)
+    Assert(!B.IsYV411, 
+    \  "SoftWipe: clip 'B' is YV411 (not accepted)")
+    ## Set Defaults
+    overlap       = Default(overlap, -30.0)
+    wid           = A.Width
+    hgt           = A.Height
+    Mode          = Default(Mode, "LeftToRight")
+    Hardness      = Float(Default(Hardness, 2.0))
+    HardnessStart = Default(HardnessStart, 50.0)
+    HardnessEnd   = Default(HardnessEnd, HardnessStart)
+    showmask      = Default(showmask, false)
+
+    ## try to make width of soft edge equal for hor & vert wipes:
+    win_w   = Hardness * Pow(Float(wid) / hgt, 0.5) 
+    win_h   = Hardness * Pow(Float(hgt) / wid, 0.5) 
+
+    frms = (overlap>=0) 
+    \ ? Round(overlap) 
+    \ : -Round(overlap*A.FrameRate)
+    AudioMix = Dissolve(A, B, frms).KillVideo
+    A = A.KillAudio
+    B = B.KillAudio
+
+    A = (showmask) ? BlankClip(A, color=$000000) : A
+    B = (showmask) ? BlankClip(B, color=$ffffff) : B
+
+    ## Check Input
+    Assert(Mode=="LeftToRight" || Mode=="RightToLeft" || Mode=="TopToBottom" || Mode=="BottomToTop", 
+    \   "SoftWipe: allowed Mode values LeftToRight|RightToLeft|TopToBottom|BottomToTop.")
+    Assert(frms < A.Framecount, 
+    \   ("SoftWipe: overlap [$f] must be less than clip A length [$a]")
+    \    .ReplaceStr("$f", String(frms))
+    \    .ReplaceStr("$a", String(A.Framecount))
+    \ )
+    Assert(frms < B.Framecount, 
+    \   ("SoftWipe: overlap [$f] must be less than clip B length [$b]")
+    \    .ReplaceStr("$f", String(frms))
+    \    .ReplaceStr("$b", String(B.Framecount))
+    \ )
+
+    ## Set Parameters
+    aMid = Trim(A, FrameCount(A)-frms, 0)
+    bMid = Trim(B, 0, -frms)
+    (Mode=="RightToLeft") ? Eval("""
+        BlankWidth = Int(4 / 2 * win_w)   
+        BlankHeight = hgt
+        startX1 = 1.5
+        endX1 = BlankWidth + 0.5
+        startY1 = 0
+        endY1 = 0
+        x2 = win_w * 2 - 2
+        y2 = 0  
+        ClipLeft = aMid
+        ClipRight = bMid
+    """)
+    \ : (Mode=="TopToBottom") ? Eval("""
+        BlankWidth = wid    
+        BlankHeight = Int(6 / 2 * win_h)
+        startX1 = 0
+        endX1 = 0
+        startY1 = BlankHeight + 0.5
+        endY1 = 3.5
+        x2 = 0
+        y2 = win_h * 3 - 4 
+        ClipLeft = bMid
+        ClipRight = aMid
+    """)
+    \ : (Mode=="BottomToTop") ? Eval("""
+        BlankWidth = wid    
+        BlankHeight = Int(6 / 2 * win_h)
+        startX1 = 0
+        endX1 = 0
+        startY1 = 3.5
+        endY1 = BlankHeight + 0.5
+        x2 = 0
+        y2 = win_h * 3 - 4 
+        ClipLeft = aMid
+        ClipRight = bMid
+    """) 
+    \ : Eval(""" ## (Mode=="LeftToRight") 
+        BlankWidth = Int(4 / 2 * win_w)   
+        BlankHeight = hgt
+        startX1 = BlankWidth + 0.5
+        endX1 = 1.5
+        startY1 = 0
+        endY1 = 0
+        x2 = win_w * 2 - 2
+        y2 = 0  
+        ClipLeft = bMid
+        ClipRight = aMid
+    """) 
+
+    ## Make Mask
+    BlackBar = BlankClip(A, length=frms+2, 
+    \           width=BlankWidth, height=BlankHeight, 
+    \           pixel_type="RGB32")
+    WhiteBar = BlankClip(BlackBar, color=$FFFFFF)
+    BWmask = (Mode=="LeftToRight" || Mode=="RightToLeft")
+    \   ? StackHorizontal(BlackBar, WhiteBar) 
+    \   : StackVertical  (BlackBar, WhiteBar) 
+    BWmask = BWmask.Animate(0, frms+1, "GaussResize",
+    \       wid, hgt, startX1, startY1, x2, y2, HardnessStart,
+    \       wid, hgt, endX1,   endY1,   x2, y2, HardnessEnd
+    \ ).Trim(1, frms)
+
+    ## Glue it together
+    Trim(A, 0, FrameCount(A)-frms-1)
+    (frms > 0 )
+    \   ? Last + Overlay(ClipLeft, ClipRight, mask=BWmask, pc_range=True) 
+    \             [*  .Subtitle("win_w="+String(win_w)+"; win_h="+String(win_h)) *]
+    \   : Last
+    
+    Last + Trim(B, frms, 0)
+    HasAudio(AudioMix) 
+    \   ? AudioDub(last, AudioMix) 
+    \   : last
+}
+
 #######################################################################################
 ### CROP, RESIZE AND TRANSFORM FILTERS
 #######################################################################################
@@ -2733,8 +3104,8 @@ function CropLTWH(clip C, int left, int top, int width, int height,
     mx = Default(minwidth,  0)
     my = Default(minheight, 0)
 
-    L  = Min(Max(0, left),    C.Width-mx)
-    T  = Min(Max(0, top),     C.Height-my)
+    L  = Min(Max(0, left), C.Width-mx)
+    T  = Min(Max(0, top),  C.Height-my)
     W  = (width==0)  ? (C.Width-L)  : Min(Max(mx, width),  C.Width-L)
     H  = (height==0) ? (C.Height-T) : Min(Max(my, height), C.Height-T)
 
@@ -2801,11 +3172,11 @@ function Cropd(clip C, int x, int y, int wid, int hgt, bool "align", int "mod")
 function ScaleZoom(clip C, float factor, int mod, 
 \               string "sm", string "med", string "lg",
 \               float "thrSm", float "thrLg", bool "fade", bool "ident", 
-\               bool "gamma", bool "hibit")
+\               bool "gamma", bool "hibit", bool "debug")
 {
     return C.ScaleSize(
     \           (factor*C.Width), (factor*C.Height), mod, 
-    \           sm, med, lg, thrSm, thrLg, fade, ident, gamma, hibit) 
+    \           sm, med, lg, thrSm, thrLg, fade, ident, gamma, hibit, debug) 
 }
 
 ##################################
@@ -2844,6 +3215,7 @@ function ScaleZoom(clip C, float factor, int mod,
 ## @ gamma - if true (default) and if bit depth > 8, do linear-light processing 
 ##           @see [[#remove_gamma]] (may retain more highlights but slightly slower)
 ## @ hibit - if true, process internally at the next higher bit depth; default false
+## @ debug - if true, show internal variables on screen; default false
 ##
 ## version 2.0 2017-04-16 raffriff42
 ## version 2.1 2017-05-6  auto-nogamma
@@ -2853,7 +3225,7 @@ function ScaleZoom(clip C, float factor, int mod,
 function ScaleSize(clip C, float fwid, float fhgt, int mod, 
 \               string "sm", string "med", string "lg",
 \               float "thrSm", float "thrLg", bool "fade", bool "ident", 
-\               bool "gamma", bool "hibit")
+\               bool "gamma", bool "hibit", bool "debug")
 {
     mdd   = mod
     sm    = Default(sm,  "ScaleSize_small")
@@ -2866,6 +3238,7 @@ function ScaleSize(clip C, float fwid, float fhgt, int mod,
     hibit = Default(hibit, false)
     biti  = C.BitsPerComponent
     bitn  = (biti>=16) ? R41_BITMAX : (biti + 2) ## intermediate bit depth
+    debug = Default(debug, false)
 
     C = (!hibit)     ? C 
     \ : (bitn<=biti) ? C 
@@ -2899,23 +3272,23 @@ function ScaleSize(clip C, float fwid, float fhgt, int mod,
     adjX = (Float(mwid)-fwid)/fx ## pre-crop (crop before resize) 
     adjY = (Float(mhgt)-fhgt)/fy
 
-    debug = false
-    dbg = (!debug) ? ""
-    \   : "ScaleSize:\n"
-    \   + String(mdd,       "mod= %0.0f\n")
-    \   + String(C.Width,   "in_wid=   %0.0f\n")
-    \   + String(C.Height,  "in_hgt=   %0.0f\n")
-    \   + String(fwid,      "arg_wid= %0.2f\n")
-    \   + String(fhgt,      "arg_hgt= %0.2f\n")
-    \   + String(fx,        "fx= %0.2f\n")
-    \   + String(fy,        "fy= %0.2f\n")
-    \   + String(fxy,       "scalefactor= %0.2f\n")
-    \   + String(mwid,      "out_wid= %0.0f\n")
-    \   + String(mhgt,      "out_hgt= %0.0f\n")
-    \   + String(mwid-fwid, "raw     adjX= %+0.2f\n")
-    \   + String(mhgt-fhgt, "raw     adjY= %+0.2f\n")
-    \   + String(adjX,      "scaled adjX= %+0.2f\n")
-    \   + String(adjY,      "scaled adjY= %+0.2f\n")
+    n = Chr(10)
+    dbg =  "ScaleSize:"
+    \   + n + String(mdd,       "mod= %0.0f")
+    \   + n + String(C.Width,   "in_wid=   %0.0f")
+    \   + n + String(C.Height,  "in_hgt=   %0.0f")
+    \   + n + String(fwid,      "arg_wid= %0.2f")
+    \   + n + String(fhgt,      "arg_hgt= %0.2f")
+    \   + n + String(fx,        "fx= %0.2f")
+    \   + n + String(fy,        "fy= %0.2f")
+    \   + n + String(fxy,       "scalefactor= %0.2f")
+    \   + n + String(mwid,      "out_wid= %0.0f")
+    \   + n + String(mhgt,      "out_hgt= %0.0f")
+    \   + n + String(mwid-fwid, "raw     adjX= %+0.2f")
+    \   + n + String(mhgt-fhgt, "raw     adjY= %+0.2f")
+    \   + n + String(adjX,      "scaled adjX= %+0.2f")
+    \   + n + String(adjY,      "scaled adjY= %+0.2f")
+    #Assert(false, InfoString(C, "C") + n + dbg)
 
     src_L = -adjX/2.0
     src_T = -adjY/2.0 
@@ -2956,11 +3329,12 @@ function ScaleSize(clip C, float fwid, float fhgt, int mod,
 
     R = R.MatchColorFormat(C)
     R = (!debug) ? R 
-    \ : R.Subtitle42(dbg, size=12, x=R.Width*3/8, y=R.Height*1/16, lsp=0)
+    \ : R.Subtitle42(dbg.ReplaceStr(Chr(10), "\n"), size=12, 
+    \                x=R.Width*3/8, y=R.Height*1/16, lsp=0)
     return R
-}
-## ScaleSize "callback functions" - user-overridable: 
-## { { {
+
+    ## ScaleSize "callback functions" - user-overridable: 
+
     ###############################
     ### for downscaling smaller than aprox. 0.5x
     function ScaleSize_small(clip C, 
@@ -2993,7 +3367,159 @@ function ScaleSize(clip C, float fwid, float fhgt, int mod,
         return C.GaussResize(mwid, mhgt,
         \           src_L, src_T, src_W, src_H, p=50)
     }
-## } } }
+}
+
+# http://forum.doom9.org/showthread.php?p=1737682#post1737682
+##################################
+### crop to size with smooth pan & tilt (range -1.0_1.0; center @ 0, 0)
+## related: [[#CropShift]]
+##                                                                  
+## @ panRt  - -1=left, 0=center, +1=right; [default 0]
+## @ tiltDn - -1=up,   0=center, +1=down;  [default 0]
+## 
+## @ title  - will be added as a [[Subtitle]] (used in eg, [[StackTwoAcrossCropped]]) 
+## @ align  - see Subtitle: align
+## @ color  - see Subtitle: text_color
+## @ size   - see Subtitle: size
+##
+function CropPanTilt(clip C, int wid, int hgt, float "panRt", float "tiltDn",
+\               string "title", int "align", int "color", float "size")
+{
+    C
+    bdrWid = (wid - Width)
+    bdrHgt = (hgt - Height)
+
+    xctr  = Min(Max(-1.0, Default(panRt, 0.0)), 1.0) 
+    yctr  = Min(Max(-1.0, Default(tiltDn, 0.0)), 1.0)
+
+    bdrLt = Abs(Float(bdrWid) / 2.0)
+    bdrLt = bdrLt + bdrLt * xctr
+    bdrLt = Sign(bdrWid) * bdrLt
+    
+    bdrTp = Abs(Float(bdrHgt) / 2.0) 
+    bdrTp = bdrTp + bdrTp * yctr
+    bdrTp = Sign(bdrHgt) * bdrTp
+    
+    align = Default(align, 7) 
+    color = Default(color, $ffff00) 
+    size  = Default(size, Height/32) 
+
+    Assert(bdrLt<=0 && bdrTp<=0, 
+    \   "CropPanTilt: clip too small for target size")
+
+    Spline36Resize(wid, hgt, -bdrLt, -bdrTp, wid, hgt)
+    return (!defined(title)) ? Last 
+    \  : Subtitle(String(title), size=size, text_color=color, align=align, lsp=0)
+}
+
+##################################
+### crop to size with smooth animated pan & tilt, expressed as pixels (center @ off_x=0, off_y=0)
+## (maximum shift in any direction restricted to number of cropped pixels on that side)
+## related: CropPanTilt, CropEx
+##
+## @ off_x  <0=left, 0=center, >0=right; [default 0]
+## @ off_y  <0=up,   0=center, >0=down;  [default 0]
+##
+function CropShift(clip C, int wid, int hgt, float "off_x", float "off_y")
+{
+    off_x = Default(off_x, 0.0)
+    off_y = Default(off_y, 0.0)
+
+    bdrWid = (wid - C.Width)
+    bdrHgt = (hgt - C.Height)
+
+    bdrLt = Abs(Float(bdrWid) / 2.0)
+    bdrLt = bdrLt - off_x
+    bdrLt = Sign(bdrWid) * bdrLt
+    
+    bdrTp = Abs(Float(bdrHgt) / 2.0) 
+    bdrTp = bdrTp - off_y
+    bdrTp = Sign(bdrHgt) * bdrTp
+
+    (bdrLt<=0 && bdrTp<=0) ? Nop
+    \ : Assert(false, "CropShift: clip too small for target size")
+
+    return C.Spline36Resize(wid, hgt, -bdrLt, -bdrTp, wid, hgt)
+} 
+
+##################################
+### crop to given aspect ratio
+##
+## @ num, den - Target aspect ratio (for example, '4, 3' or '16, 9')
+##              (note '21, 9' interpreted as '21.33, 9')
+## @ mod      - [[Mod]] value; one of (1|2|4|8|16|32); default 4
+## @ tol      - Tolerance; if source aspect ratio differs with target
+##              by less than +/-'tol', do nothing. Default 0.05 (5%)
+## @ align    - Position clip within new frame size;
+##              @see [[Subtitle]] "number pad notation".
+##              For example, if align=7, top-left portion is preserved. 
+##              Default 5 (centered)
+##
+function CropToAspect(clip C, int num, int den, int "mod", 
+\               float "tol", int "align")
+{
+    C
+    num = Max(1, num)
+    den = Max(1, den)
+    tgt = Float(num)/Float(den)
+    if (Abs(2.37-tgt)<0.015) {
+        tgt = 21.3333 / 9.0
+    }
+    tol = Min(Max(0.0, Default(tol, 0.05)), 0.5)
+    mdd = Default(mod, 4)     
+    Assert((mdd==1||mdd==2||mdd==4||mdd==8||mdd==16||mdd==32), 
+    \  "CropToAspect: 'mod' argument not one of (1|2|4|8|16|32)")
+
+    asp = Float(Width)/Float(Height)     
+    if (asp > ((1.0+tol) * tgt)) {
+        CropEx(modx(mdd, tgt*Height), Height, align=align)
+    }
+    else if (asp < ((1.0-tol) * tgt)) {
+        CropEx(Width, modx(mdd, Width/tgt), align=align)
+    }
+    return Last
+}
+
+##################################
+### expand to given aspect ratio
+##
+## @ num, den - Target aspect ratio (for example, '4, 3' or '16, 9')
+##              (note '21, 9' interpreted as '21.33, 9')
+## @ mod      - [[Mod]] value; one of (1|2|4|8|16|32); default 4
+## @ tol      - Tolerance; if source aspect ratio differs with target
+##              by less than +/-'tol', do nothing. Default 0.05 (5%)
+## @ border   - Border color; default 0 (black border)
+## @ mode     - Expand method: (extend|mirror|blur|border) 
+##              Default/fallback="border"
+## @ align    - Position clip within new frame size;
+##              @see [[Subtitle]] "number pad notation".
+##              For example, if align=7, image is placed at top-left.
+##              Default 5 (centered)
+##
+function ExpandToAspect(clip C, int num, int den, int "mod", 
+\               float "tol", int "border", string "mode", int "align")
+{
+    C
+    num = Max(1, num)
+    den = Max(1, den)
+    tgt = Float(num)/Float(den)
+    if (Abs(2.37-tgt)<0.015) {
+        tgt = 21.3333 / 9.0
+    }
+    tol = Min(Max(0.0, Default(tol, 0.05)), 0.5)
+    mdd = Default(mod, 4)
+    Assert((mdd==1||mdd==2||mdd==4||mdd==8||mdd==16||mdd==32), 
+    \  "ExpandToAspect: 'mod' argument not one of (1|2|4|8|16|32)")
+    
+    asp = Float(Width)/Float(Height)     
+    if (asp > ((1.0+tol) * tgt)) {
+        CropEx(Width, modx(mdd, Width/tgt), border=border, mode=mode, align=align)
+    }
+    else if (asp < ((1.0-tol) * tgt)) {
+        CropEx(modx(mdd, tgt*Height), Height, border=border, mode=mode, align=align)
+    }
+    return Last
+}
 
 # https://forum.doom9.org/showthread.php?p=1739635#post1739635
 ### fka UUSize4
@@ -3009,7 +3535,8 @@ function ScaleSize(clip C, float fwid, float fhgt, int mod,
 ##               default/fallback="border"
 ##
 ## -- A D V A N C E D   A R G U M E N T S -----------------------------------
-## @ align    - @see [[Subtitle]] ("number pad notation"); position clip within new frame size.
+## @ align    - Position clip within new frame size;
+##              @see [[Subtitle]] "number pad notation".
 ##              For example, if align=7 and expanding, image is placed at top-left;
 ##              and if cropping, top-left portion is preserved. Default 5 (centered)
 ## @ dx, dy   - Shift output in x/y direction. Positive = right/down. Default 0. 
@@ -3290,10 +3817,81 @@ function QGaussBlur(clip C, float radx, float "rady")
     \ : C.BilinearResize(
     \        Max(16, modx(4, Float(C.Width)/(radx+1.0))), 
     \        Max(16, modx(4, FLoat(C.Height)/(rady+1.0))))
-    \    .Blur(0.3) [*  *]
+    \    .Blur(0.3)
     \    .GaussResize(
     \        C.Width, C.Height, p=19)
     ## p=19: softest w/o visible 'blockiness' 
+}
+
+##################################
+### shift a clip up-down and left-right (with sub-pixel precision);
+### this results in repeated edge pixels
+##
+function Shift(clip C, float offh, float offv)
+{
+    C 
+    BilinearResize(Width, Height, -offh, -offv, Width, Height)
+    return Last
+}
+
+## animated demo: https://forum.doom9.org/showthread.php?p=1774699#post1774699
+##==> see also http://avisynth.nl/images/ChromaShiftSP.avsi
+##################################
+### shift Chroma relative to Luma
+## (YUV, YUVA) 
+##  
+function ShiftUV(clip C, float "ux", float "uy", float "vx", float "vy")
+{
+    Assert(C.IsYUV || C.IsYUVA, 
+    \  "ShiftUV: source must be YUV(A)")
+    ux = Float(Default(ux, 0))
+    uy = Float(Default(uy, 0))
+    vx = Float(Default(vx, ux))
+    vy = Float(Default(vy, uy))
+
+    U = C.ExtractU
+    V = C.ExtractV
+    
+    U = U.BilinearResize(U.Width, U.Height, -ux, -uy, U.Width, U.Height)
+    V = V.BilinearResize(V.Width, V.Height, -vx, -vy, V.Width, V.Height)
+    
+    return (C.NumComponents==3)
+    \ ? CombinePlanes(C.ExtractY, U, V, "YUV")
+    \ : CombinePlanes(C.ExtractY, U, V, C.ExtractA, "YUVA")
+}
+
+# https://forum.doom9.org/showthread.php?p=1803247#post1803247
+##################################
+### shift and/or resize Red and Blue relative to Green
+##  (RGB24, RGB32, RGB48, RGB64, RGB10/12/14/16/32, RGBA10/12/14/16/32)
+##
+## @ rx,  ry,  bx,  by  - ± "shift" red & blue position
+## @ rxd, ryd, bxd, byd - ± "delta" width & height for advanced convergence
+##
+function ShiftRedBlue(clip C, 
+\               float "rx", float "ry",
+\               float "bx", float "by",
+\               float "rxd", float "ryd",
+\               float "bxd", float "byd")
+{
+    Assert(C.IsRGB, 
+    \   "ShiftRedBlue: source must be RGB")
+    rx  = Float(Default(rx,  0))
+    ry  = Float(Default(ry,  0))
+    bx  = Float(Default(bx,  0))
+    by  = Float(Default(by,  0))
+    rxd = Float(Default(rxd, 0))
+    ryd = Float(Default(ryd, 0))
+    bxd = Float(Default(bxd, 0))
+    byd = Float(Default(byd, 0))
+
+    R=C.ExtractR.Spline64Resize(C.Width, C.Height, -rx, -ry, C.Width-rxd, C.Height-ryd)
+    B=C.ExtractB.Spline64Resize(C.Width, C.Height, -bx, -by, C.Width-bxd, C.Height-byd)
+
+    R = (C.NumComponents==3)
+    \ ? CombinePlanes(R, C.ExtractG, B, "RGB")
+    \ : CombinePlanes(R, C.ExtractG, B, C.ExtractA, "RGBA")
+    return R.MatchColorFormat(C)
 }
 
 #######################################################################################
@@ -4218,7 +4816,8 @@ function ScopeY(clip C, bool "shrink", bool "vector", bool "levels",
     \ ? (!levels) 
     \     ? Last 
     \     : AddBorders(0, 0, R41_HISTX, 0) 
-    \ : Vector2(mode, bottom=(bottom||levels), labels=labels, marks=marks, audio=audio)
+    \ : Vector2(mode, bottom=(bottom||levels), 
+    \           labels=labels, marks=marks, audio=audio)
 
     ## if bottom=true and vector=false, put levels on bottom
     (!levels) 
