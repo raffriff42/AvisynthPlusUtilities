@@ -54,6 +54,7 @@
 ## v2018-04-12 CropToAspect, ExpandToAspect 
 ## v2018-04-14 (moved from -r42) CropPanTilt, CropShift, MergeLH, GammaCurves, SoftWipe
 ## v2018-04-14 (moved) Shift, ShiftUV, ShiftRedBlue, ChangeSpeed, ChangeAudioSpeed
+## v2018-04-15 GammaCurve, AntigammaCurve, MergeLMH
 
 global R41_HISTX = 264 ## amount classic Histogram adds to clip width (with added borders)
 global R41_BITMAX = 16 ## max implicit bit depth (float temp. disabled pending more tests)
@@ -260,11 +261,21 @@ global R41_BITMAX = 16 ## max implicit bit depth (float temp. disabled pending m
     ##\              string "RLevels", string "GLevels", string "BLevels",  
     ##\              float "defBlk", float "defWht", bool "coring", bool "dither")
 
+    ### gamma adjustment (more = brighter lowlights)
+    #@ function GammaCurve(clip C, float gamma, bool "tvrange")
+
+    ### 'anti-gamma' adjustment (more = darker highlights)
+    #@ function AntigammaCurve(clip C, float antigamma, bool "tvrange")
+
     ### 'S'-curve luma adjustment
     #@ function GammaCurves(clip C, float gamma, float antigamma, bool "tvrange")
 
     ### merge 'Lo', 'Hi' clips based on clip 'T' luma
     #@ function MergeLH(clip T, clip Lo, clip Hi, float "lothresh", float "hithresh")
+
+    ### merge 'Lo', 'Mid', 'Hi' clips based on clip 'T' luma
+    #@ function MergeLMH(clip T, clip Lo, clip Mid, clip Hi, float "bias",
+    ##\               float "ctr_lo", float "ctr_hi", float "qfactor")
 
     ### [[Layer]] with support for 'mask', 'opacity' and 'align' parameters 
     #@ function LayerAligned(clip base, clip over, string "op", int "level", 
@@ -290,7 +301,7 @@ global R41_BITMAX = 16 ## max implicit bit depth (float temp. disabled pending m
     ### "slip" (advance or delay) a clip in time.
     #@ function Slip(clip C, int offset)
 
-    ### change speed over a wide range
+    ### change speed over a wide range (basic FF and slo-mo; no motion compensation)
     #@ function ChangeSpeed(
     ##\               clip C, float factor, bool "pitchfix", bool "noblend")
 
@@ -666,7 +677,7 @@ function BitsToPixelType(string prefix, int bits, int "chroma")
     prefix = (isyuv && bits>0) ? prefix+"P" : prefix
     
     sbits  = ((isrgb || isyuv)  && bits==32) ? "S" 
-    \      : ((isyuv && isalph) && bits==8 ) ? "8" 
+    \      : ((isyuv [* && isalph *]) && bits==8 ) ? "8" 
     \      : ((isrgb || isyuv)  && bits==8 ) ? "" 
     \      : String(bits)
     return (prefix + sbits)
@@ -2413,6 +2424,54 @@ function LevelssRGB(clip C,
     return Last
 }
 
+#######################################
+### gamma adjustment (more = brighter lowlights)
+## 
+## @ tvrange   - if true, anchor curve on TV black (16d) and TV white (235d);
+##               default false for RGB source, true for YUV; 
+##               for Y-only sources, if 'tvrange' not specified, an error is raised.
+##
+function GammaCurve(clip C, float gamma, bool "tvrange") 
+{
+    Assert(!C.IsY || Defined(tvrange), 
+    \   "Gammacurve: 'tvrange' must be defined for Y-only clips")
+    tvrange = Default(tvrange, !C.IsRGB)
+    C
+    if (tvrange) {
+        Levelss(16, gamma, 235, 16, 235, coring=false, chroma=false)
+    }
+    else {
+        Levelss(0, gamma, 255, 0, 255, coring=false, chroma=false)
+    }
+    return Last
+}
+
+#######################################
+### 'anti-gamma' adjustment (more = darker highlights)
+##
+## @ tvrange   - if true, anchor curve on TV black (16d) and TV white (235d);
+##               default false for RGB source, true for YUV; 
+##               for Y-only sources, if 'tvrange' not specified, an error is raised.
+##
+function AntigammaCurve(clip C, float antigamma, bool "tvrange") 
+{
+    Assert(!C.IsY || Defined(tvrange), 
+    \   "AntigammaCurve: 'tvrange' must be defined for Y-only clips")
+    tvrange = Default(tvrange, !C.IsRGB)
+    C
+    if (tvrange) {
+        Invert.ColorYUV(off_y=(-5))
+        Levelss(16, antigamma, 235, 16, 235, coring=false, chroma=false)
+        Invert.ColorYUV(off_y=(-5))
+    }
+    else {
+        Invert
+        Levelss(2, antigamma, 253, 2, 253, coring=false, chroma=false)
+        Invert
+    }
+    return Last
+}
+
 ## fka 'GammaScurve'
 ###################################
 ### 'S'-curve luma adjustment
@@ -2426,38 +2485,12 @@ function LevelssRGB(clip C,
 function GammaCurves(clip C, float gamma, float antigamma, bool "tvrange")
 {
     Assert(!C.IsY || Defined(tvrange), 
-    \   "GammaScurve: 'tvrange' must be defined for Y-only clips")
+    \   "Gammacurves: 'tvrange' must be defined for Y-only clips")
     tvrange = Default(tvrange, !C.IsRGB)
     C
-    Lo = _GammaCurve(gamma, tvrange)
-    Hi = _AntigammaCurve(antigamma, tvrange)
-    return MergeLH(C, Lo, Hi)
-
-    function _GammaCurve(clip C, float gamma, bool tvrange) {
-        if (tvrange) {
-            return C.Levelss(16, gamma, 235, 16, 235, coring=false, chroma=false)
-        }
-        else {
-            return C.Levelss(0, gamma, 255, 0, 255, coring=false, chroma=false)
-        }
-    }
-
-    function _AntigammaCurve(clip C, float antigamma, bool tvrange) {
-        if (tvrange) {
-            C
-            Invert.ColorYUV(off_y=(-5))
-            Levelss(16, antigamma, 235, 16, 235, coring=false, chroma=false)
-            Invert.ColorYUV(off_y=(-5))
-            return Last
-        }
-        else {
-            C
-            Invert
-            Levelss(2, antigamma, 253, 2, 253, coring=false, chroma=false)
-            Invert
-            return Last
-        }
-    }
+    Lo = GammaCurve(gamma, tvrange)
+    Hi = AntigammaCurve(antigamma, tvrange)
+    return MergeLH(C, Lo, Hi) 
 }
 
 #######################################
@@ -2492,6 +2525,94 @@ function MergeLH(clip T, clip Lo, clip Hi, float "lothresh", float "hithresh")
     return (Lo.HasAlpha)
     \ ? Expr(T, Lo, Hi, s, s, s, s, format=Lo.PixelType)
     \ : Expr(T, Lo, Hi, s, s, s,    format=Lo.PixelType)
+}
+
+## old version here: http://forum.doom9.org/showthread.php?p=1691736#post1691736
+#######################################
+### merge 'Lo', 'Mid', 'Hi' clips based on clip 'T' luma
+##
+## @ T         - control clip: PC range; color format must match Lo/Mid/Hi;
+##               RGB(A) or YUV(A); full range recommended for accuracy.
+## @ Lo, Mid, Hi - source clips: size and color format must match clip 'T'.
+##
+## -- A D V A N C E D   A R G U M E N T S -----------------------------------
+## @ bias      - if < 0, favor 'Lo' clip; if > 0, favor 'Hi' clip; default 0.0
+## @ ctr_lo    - peak response luminance for low mask 'bandpass';
+##               range = -127d_127d; default 0d
+## @ ctr_hi    - peak response luminance for high mask;
+##               range = 127d_383d; default 255d
+## @ qfactor   - sharpness of the 'bandpass filter'; 
+##               higher values result in steeper slope, narrower 'passband'
+##               range = 0.0(sharp)_40.0(broad); default 0.7;
+##               "useable" range = 0.4_1.4
+##             
+## Example - desaturate at luma extremes
+## | MergeLMH(Last, Grayscale, Last, Grayscale)
+##
+## @ v2017-05-19 AVS+, MaskTools 2.2.x deep color
+## @ v2018-04-14 AVS+ Expr
+##
+function MergeLMH(clip T, clip Lo, clip Mid, clip Hi, float "bias",
+\               float "ctr_lo", float "ctr_hi", float "qfactor")
+{
+    Assert(Lo.Width==Mid.Width && Lo.Height==Mid.Height
+    \   && Lo.Width==Hi.Width && Lo.Height==Hi.Height
+    \   && Lo.Width==T.Width && Lo.Height==T.Height,
+    \   "MergeLMH: 'Lo', 'Mid', 'Hi' and 'T' height and width must match")
+    Assert(Lo.PixelType==Mid.PixelType 
+    \   && Lo.PixelType==Hi.PixelType
+    \   && Lo.PixelType==T.PixelType,
+    \   "MergeLMH: 'Lo', 'Mid', 'Hi' and 'T' color format and bit depth must match")
+
+    bias = Default(bias, 0.0)
+    #show = Default(showmasks, false)
+
+    T = (Abs(bias)<0.01) ? T
+    \ : (   bias < 0.00) ? T.Gammacurve(1.0/(-bias+1.0), tvrange=false)
+    \                    : T.Gammacurve(   bias+1.0    , tvrange=false)
+
+    bits = T.BitsPerComponent
+    cLo  = Min(Max( -127, Default(ctr_lo,   0.0)), 127)
+    cHi  = Min(Max(  127, Default(ctr_hi, 255.0)), 383)
+    q    = Min(Max(0.001, Default(qfactor, 0.7)),  40.0)
+    ramp = Min(Max(0, 59.82 * Pow(q, -0.76)),  512)
+    wid  = 60
+
+    ## Lo * Min(Max(0, (1+((wid/510)*(255/ramp)))-(((x-cLo)/255)*(255/ramp))), 1)
+    sLo = ("$wid $rng2 / $rng $ramp / * 1 + "
+    \   + "x $cLo - $rng / $rng $ramp / * - "
+    \   + "0 max 1 min ")
+    \   .ReplaceStr("$rng2 ", "range_size 2 * ")
+    \   .ReplaceStr("$rng ", "range_size ")
+    \   .ReplaceStr("$wid",   T.sc8s(wid))
+    \   .ReplaceStr("$ramp",  T.sc8s(ramp))
+    \   .ReplaceStr("$cLo",   T.sc8s(cLo)) 
+
+    ## Hi * Min(Max(0, (1+((wid/510)*(255/ramp)))-(((cHi-x)/255)*(255/ramp))), 1)
+    sHi = ("$wid $rng2 / $rng $ramp / * 1 + "
+    \   + "$cHi x - $rng / $rng $ramp / * - "
+    \   + "0 max 1 min")
+    \   .ReplaceStr("$rng2 ", "range_size 2 * ")
+    \   .ReplaceStr("$rng ", "range_size ")
+    \   .ReplaceStr("$wid",   T.sc8s(wid))
+    \   .ReplaceStr("$ramp",  T.sc8s(ramp))
+    \   .ReplaceStr("$cHi",   T.sc8s(cHi)) 
+
+    ## x=T; y=Lo; x=Hi; a=Mid
+    sMerge = ("y " + sLo + " L@ * "
+    \      +  "z " + sHi + " H@ * + "
+    \      +  "a 1 L H + - * + ")
+
+    Tx = (T.IsRGB) ? T
+    \  : CombinePlanes(T, T, T, "YUV", "YYY", 
+    \       pixel_type=BitsToPixelType("YUV", bits, 444))
+    \    .MatchColorFormat(T)
+
+    R = (T.IsRGB)
+    \ ? Expr(TX, Lo, Hi, Mid, sMerge)
+    \ : Expr(TX, Lo, Hi, Mid, sMerge)
+
+    return R
 }
 
 ##################################
@@ -2804,8 +2925,7 @@ function Slip(clip C, int offset)
 } 
 
 #######################################
-### change speed over a wide range, 
-### with frame blending in fast forward by default.
+### change speed over a wide range (basic FF and slo-mo; no motion compensation)
 ##
 ## @ factor - 0.33 for 1/3 speed, etc; 
 ##    min = 0.001; max = min([[FrameCount]], 1000) 
