@@ -126,7 +126,7 @@ global giUUTrim = 0
     ##\               string "mode", float "opacity", float "maskblur")
 
     ### merge 'Lo', 'Mid', 'Hi' clips based on clip 'T' luma
-    #@ function MergeLMH(clip T, clip Lo, clip Mid, clip Hi, float "bias",
+    #@ function MergeLMH_00(clip T, clip Lo, clip Mid, clip Hi, float "bias",
     ##\               float "ctr_lo", float "ctr_hi", float "qfactor",
     ##\               bool "showmasks")
 
@@ -333,6 +333,9 @@ global giUUTrim = 0
 
     ### invert hue in a sweeping pattern (used to find a particular hue)
     #@ function HueSweep(clip C, int "hue_range", int "sweep_increment", int "sweep_start")
+
+    ### stacked R, G, B histograms on top
+    #@ function HistogramTurnRGB(clip C)
 
     ### show video waveform + vectorscope + audio scopes; YUV only
     #@ function TekScopes(clip clp) 
@@ -1394,7 +1397,7 @@ function BoxMaskOverlay(clip C,
 ##
 ## version 2017-05-19 AVS+, MaskTools 2.2.x deep color
 ##
-function MergeLMH(clip T, clip Lo, clip Mid, clip Hi, float "bias",
+function MergeLMH_00(clip T, clip Lo, clip Mid, clip Hi, float "bias",
 \               float "ctr_lo", float "ctr_hi", float "qfactor",
 \               bool "showmasks")
 {
@@ -3754,6 +3757,29 @@ function HueSweep(clip C, int "hue_range", int "sweep_increment", int "sweep_sta
       Subtitle("h="+String(h, "%0.0f"), size=56, align=5)
     """)
 
+    return Last
+}
+
+#############################
+### stacked R, G, B histograms on top
+##
+function HistogramTurnRGB(clip C)
+{
+    bits = C.BitsPerComponent
+    C
+    TurnRight
+
+    R = ExtractR._Hist2.BicubicResize(128, Height)
+    G = ExtractG._Hist2.BicubicResize(128, Height)
+    B = ExtractB._Hist2.BicubicResize(128, Height)
+    X = BlankClip(G, color=$0)
+
+    R = CombinePlanes(R, X, X, "RGB", "YYY", pixel_type=BitsToPixelType("RGBA", bits))
+    G = CombinePlanes(X, G, X, "RGB", "YYY", pixel_type=BitsToPixelType("RGBA", bits))
+    B = CombinePlanes(X, X, B, "RGB", "YYY", pixel_type=BitsToPixelType("RGBA", bits))
+
+    StackHorizontal(Last, B, G, R)
+    TurnLeft
     return Last
 }
 

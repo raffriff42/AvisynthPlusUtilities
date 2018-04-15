@@ -2,7 +2,7 @@
 ## 2018-04-11 raffriff42
 
 ## download this script from:
-## <TODO>
+## https://github.com/raffriff42/AvisynthPlusUtilities
 
 ## requires MinMaxAudio
 ## http://wilbertdijkhof.com/

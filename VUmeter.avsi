@@ -21,7 +21,7 @@
 ## meter ballistics emulated with a 2nd order Butterworth low-pass filter
 ## https://en.wikipedia.org/wiki/Butterworth_filter
 ## Digital filter designed by mkfilter/mkshape/gencode
-## http://www-users.cs.york.ac.uk/~fisher/mkfilter 
+## http://www-users.cs.york.ac.uk/~fisher/mkfilter
 
 global g_vu_dark = ScriptDir + "\VUmeter-blank-09.png" ## dark  BG
 global g_vu_lite = ScriptDir + "\VUmeter-blank-05.png" ## white (vuplayer.com)
