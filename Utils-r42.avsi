@@ -5,6 +5,11 @@
 ## v2017-10-15 SuperSexyWidescreen
 ## v2017-11-15 GrayRadial, ColorRadial
 ## v2017-11-22 MergeFiveBand
+## v2018-04-14 (removed to -r42) CropPanTilt, CropShift, MergeLH, GammaCurves, SoftWipe
+## v2018-04-14 (removed) Shift, ShiftUV, ShiftRedBlue
+## v2018-04-15 (removed) GammaCurve, AntigammaCurve, MergeLMH
+## v2018-04-16 (returned) SoftWipe, ChangeSpeed, ChangeAudioSpeed
+
 
 ## download latest:
 ##   https://raw.githubusercontent.com/raffriff42/AvisynthPlusUtilities/master/Utils-r42.avsi
@@ -43,6 +48,14 @@ global giUUTrim = 0
 ### UTILITY FILTERS 
 
 ### TIMELINE FILTERS
+
+    ### change speed over a wide range (basic FF and slo-mo; no motion compensation)
+    #@ function ChangeSpeed(
+    ##\               clip C, float factor, bool "pitchfix", bool "noblend")
+
+    ### audio only: change speed over a wide range 
+    #@ function ChangeAudioSpeed(
+    ##\               clip C, float factor, bool "pitchfix")
 
     ### fade video and audio
     #@ function UUFadeAV(clip C, 
@@ -277,6 +290,12 @@ global giUUTrim = 0
 
 ### TRANSITION & EFFECT FILTERS
 
+    ### Dissolve with a Wipe transition; adjustable soft edge.
+    #@ function SoftWipe(clip A, clip B, float "overlap", 
+    ##\               string "Mode", float "WindowSize",
+    ##\               float "HardnessStart", float "HardnessEnd",
+    ##\               bool "showmask")
+
     ### emulate color temperature changes in three luma ranges
     #@ function CheapColorTemp(clip C, 
     ##\               int offset_lo, int offset_mid, int offset_hi)
@@ -323,7 +342,7 @@ global giUUTrim = 0
     ### add rainbow border on all sides
     #@ function rainbow_border(clip C, int "modx", int "mody")
 
-    ### colorbars designed to be stacked over clip 'C'; no audio
+    ### colorbars with HSL (not NTSC) colors; no audio
     #@ function MiniBars(clip C, int "height", bool "ontop", bool "inset", bool "label")
 
     ### make side-by-side split clip; crop input images to fit in original width
@@ -379,7 +398,7 @@ function myFFSource2(string path, int "atrack",
 
     ## cache a few frames of input - "dont ask, just do"
     ## http://forum.doom9.org/showthread.php?p=1473445#post1473445 
-    #(showtype || showfrm) ? Last : ChangeFPS(Last, Last, true)
+    (showtype || showfrm) ? Last : ChangeFPS(Last, Last, true)
 
     return (showtype) ? ScriptClip(Last, """
               Subtitle("[ "+chr(FFPICT_TYPE)+" ]", 
@@ -402,16 +421,22 @@ function myLibavSource2(string path,
 \               string "colorspace", bool "stacked", bool "cache",
 \               string "vdecoder", string "adecoder", int "atrack")
 {
+    ##function myLibavSource(string path, int "atrack", 
+    ##\               int "fpsnum", int "fpsden",
+    ##\               bool "showtype",  bool "showframe",
+    ##\               string "colorspace", bool "stacked", bool "cache",
+    ##\               string "vdecoder", string "adecoder")
+
     atrack = Default(atrack, -1)
     try {
-        return myLibavSource2(path, atrack, 
+        return myLibavSource(path, atrack, 
         \                   0, 1, 
         \                   false, false, 
         \                   colorspace, stacked, cache,
         \                   vdecoder, adecoder)
     }
     catch(err_msg) {
-        return myLibavSource2(path, -2, 
+        return myLibavSource(path, -2, 
         \                   0, 1, 
         \                   false, false, 
         \                   colorspace, stacked, cache,
@@ -470,6 +495,104 @@ function mySmashSource(string path, int "atrack",
 #######################################################################################
 ### TIMELINE FILTERS
 #######################################################################################
+
+#######################################
+### change speed over a wide range (basic FF and slo-mo; no motion compensation)
+##
+## @ factor - 0.33 for 1/3 speed, etc; 
+##    min = 0.001; max = min([[FrameCount]], 1000) 
+##    (if > FrameCount, duration would be 0);
+##    if argument is out of range, an error occurs.
+##
+## @ pitchfix - if true, maintain audio pitch with speed 
+##    (default false; allow pitch to rise or fall)
+##
+## @ noblend - if true, never blend frames (default false)
+##
+## @ fpsnum, fpsden - output frame rate; default same as 'C'
+##
+## @ v2014-02-24 raffriff42
+## @ v2018-04-14 fpsnum, fpsden
+##
+function ChangeSpeed(clip C, float factor, 
+\               bool "pitchfix", bool "noblend", int "fpsnum", int "fpsden")
+{
+    pitchfix = Default(pitchfix, false)
+    noblend  = Default(noblend, false)
+    fpsnum   = Max(1, Default(fpsnum, C.FrameRateNumerator))
+    fpsden   = Max(1, Default(fpsden, C.FrameRateDenominator))
+
+    Assert(!C.IsYV411 && (C.IsYUV||C.IsYUVA), 
+    \  "ChangeSpeed: RGB, YV411 not accepted") ## (cf. Overlay)
+    Assert(factor>=0.001, 
+    \  "ChangeSpeed bad argument: factor<0.001")
+    Assert(factor<=1000.0, 
+    \  "ChangeSpeed bad argument: factor>1000")
+    Assert(factor<=C.FrameCount, 
+    \  "ChangeSpeed bad argument: factor>FrameCount")
+
+    AS  = C.KillAudio.AssumeFPS(C.FrameRate * factor)
+
+    temprad = Round(0.5 * factor) 
+    TS = (factor<1.0 || temprad==0 || noblend) 
+    \  ? AS 
+    \  : AS.Overlay(
+    \       AS.TemporalSoften(temprad, 255, 255, 48, 2), 
+    \       opacity=0.7)
+
+    R  = (factor<1.5 && noblend==false)  
+    \  ? AS.ConvertFPS(fpsnum, fpsden) 
+    \  : TS.ChangeFPS(fpsnum, fpsden, linear=(factor<10.0))
+
+    return (Abs(factor-1.0) < (0.5/C.FrameCount)) ? C
+    \  : (!C.HasAudio) ? R 
+    \  : R.AudioDub( C.ChangeAudioSpeed(factor, pitchfix) )
+}
+
+#######################################
+### audio only: change speed over a wide range 
+##
+## @ factor - 0.33 for 1/3 speed, etc; 
+##    min = 0.01; max < 1000;
+##    if argument is out of range, an error occurs.
+##
+## @ pitchfix - if true, maintain audio pitch with speed 
+##    (default false; allow pitch to rise or fall)
+##
+## @ v2017-04-11 split from [[ChangeSpeed]]
+## @ v2018-04-14 tweak 'sequence' for slo-mo when correcting pitch
+##
+function ChangeAudioSpeed(
+\               clip C, float factor, bool "pitchfix")
+{
+    Assert(C.HasAudio, 
+    \  "ChangeAudioSpeed bad argument: source has no audio")
+    Assert(factor>=0.01, 
+    \  "ChangeAudioSpeed bad argument: factor < 0.01")
+    Assert(factor<=1000.0, 
+    \  "ChangeAudioSpeed bad argument: factor > 1000")
+
+    pitchfix = Default(pitchfix, false)
+
+    A = (factor > 0.7)
+    \ ? (pitchfix)
+    \    ? C.ConvertAudioToFloat.TimeStretch(tempo = factor*100.0)
+    \    : C.ConvertAudioToFloat.TimeStretch(rate  = factor*100.0)
+    \ : (pitchfix)
+    \    ? C.ConvertAudioToFloat.TimeStretch(tempo = factor*100.0, sequence=50)
+    \    : C.ConvertAudioToFloat.TimeStretch(rate  = factor*100.0)
+
+    R = (Abs(factor-1.0) < 0.0001) ? C
+    \ : (C.AudioDuration/factor < 0.001) ? C.AudioTrim(0.0, length=0.0)
+    \ : (C.AudioBits==32) ? A.ConvertAudioTo32bit
+    \ : (C.AudioBits==24) ? A.ConvertAudioTo24bit
+    \ : (C.AudioBits==16) ? A.ConvertAudioTo16bit
+    \ : (C.AudioBits==8)  ? A.ConvertAudioTo8bit
+    \ : A ## (==float)
+
+    return (factor > 0.99) ? R 
+    \ : R.AudioTrim(0.0, length=C.AudioDuration)
+}
 
 #######################################
 ### fade video and audio
@@ -3178,6 +3301,144 @@ function TextSubPlus(clip C, string path, int "charset", float "fps", string "vf
 ### TRANSITION & EFFECT FILTERS
 #######################################################################################
 
+# https://forum.videohelp.com/threads/387798-Add-transition-to-overlay-in-AviSynth#post2510235
+##################################
+### Dissolve with a Wipe transition; adjustable soft edge.
+##
+## @ A            - starting clip 
+## @ B            - ending clip
+## @ overlap      - overlapped frames; if negative, overlapped seconds
+## @ Mode         - (LeftToRight|RightToLeft|TopToBottom|BottomToTop)
+## @ Hardness      - 2=soft; 10=medium; 100=hard; default 2
+## @ HardnessStart - 1=blur; 100=sharp; default 50
+## @ HardnessEnd   - 1=blur; 100=sharp; default 50
+##
+function SoftWipe(clip A, clip B, float "overlap", 
+\               string "Mode", float "Hardness",
+\               float "HardnessStart", float "HardnessEnd",
+\               bool "showmask")
+{
+    Assert(!A.IsYV411, 
+    \  "SoftWipe: clip 'A' is YV411 (not accepted)") ## (cf. Overlay)
+    Assert(!B.IsYV411, 
+    \  "SoftWipe: clip 'B' is YV411 (not accepted)")
+    ## Set Defaults
+    overlap       = Default(overlap, -30.0)
+    wid           = A.Width
+    hgt           = A.Height
+    Mode          = Default(Mode, "LeftToRight")
+    Hardness      = Float(Default(Hardness, 2.0))
+    HardnessStart = Default(HardnessStart, 50.0)
+    HardnessEnd   = Default(HardnessEnd, HardnessStart)
+    showmask      = Default(showmask, false)
+
+    ## try to make width of soft edge equal for hor & vert wipes:
+    win_w   = Hardness * Pow(Float(wid) / hgt, 0.5) 
+    win_h   = Hardness * Pow(Float(hgt) / wid, 0.5) 
+
+    frms = (overlap>=0) 
+    \ ? Round(overlap) 
+    \ : -Round(overlap*A.FrameRate)
+    AudioMix = Dissolve(A, B, frms).KillVideo
+    A = A.KillAudio
+    B = B.KillAudio
+
+    A = (showmask) ? BlankClip(A, color=$000000) : A
+    B = (showmask) ? BlankClip(B, color=$ffffff) : B
+
+    ## Check Input
+    Assert(Mode=="LeftToRight" || Mode=="RightToLeft" || Mode=="TopToBottom" || Mode=="BottomToTop", 
+    \   "SoftWipe: allowed Mode values LeftToRight|RightToLeft|TopToBottom|BottomToTop.")
+    Assert(frms < A.Framecount, 
+    \   ("SoftWipe: overlap [$f] must be less than clip A length [$a]")
+    \    .ReplaceStr("$f", String(frms))
+    \    .ReplaceStr("$a", String(A.Framecount))
+    \ )
+    Assert(frms < B.Framecount, 
+    \   ("SoftWipe: overlap [$f] must be less than clip B length [$b]")
+    \    .ReplaceStr("$f", String(frms))
+    \    .ReplaceStr("$b", String(B.Framecount))
+    \ )
+
+    ## Set Parameters
+    aMid = Trim(A, FrameCount(A)-frms, 0)
+    bMid = Trim(B, 0, -frms)
+    (Mode=="RightToLeft") ? Eval("""
+        BlankWidth = Int(4 / 2 * win_w)   
+        BlankHeight = hgt
+        startX1 = 1.5
+        endX1 = BlankWidth + 0.5
+        startY1 = 0
+        endY1 = 0
+        x2 = win_w * 2 - 2
+        y2 = 0  
+        ClipLeft = aMid
+        ClipRight = bMid
+    """)
+    \ : (Mode=="TopToBottom") ? Eval("""
+        BlankWidth = wid    
+        BlankHeight = Int(6 / 2 * win_h)
+        startX1 = 0
+        endX1 = 0
+        startY1 = BlankHeight + 0.5
+        endY1 = 3.5
+        x2 = 0
+        y2 = win_h * 3 - 4 
+        ClipLeft = bMid
+        ClipRight = aMid
+    """)
+    \ : (Mode=="BottomToTop") ? Eval("""
+        BlankWidth = wid    
+        BlankHeight = Int(6 / 2 * win_h)
+        startX1 = 0
+        endX1 = 0
+        startY1 = 3.5
+        endY1 = BlankHeight + 0.5
+        x2 = 0
+        y2 = win_h * 3 - 4 
+        ClipLeft = aMid
+        ClipRight = bMid
+    """) 
+    \ : Eval(""" ## (Mode=="LeftToRight") 
+        BlankWidth = Int(4 / 2 * win_w)   
+        BlankHeight = hgt
+        startX1 = BlankWidth + 0.5
+        endX1 = 1.5
+        startY1 = 0
+        endY1 = 0
+        x2 = win_w * 2 - 2
+        y2 = 0  
+        ClipLeft = bMid
+        ClipRight = aMid
+    """) 
+
+    ## Make Mask
+    BlackBar = BlankClip(A, length=frms+2, 
+    \           width=BlankWidth, height=BlankHeight, 
+    \           pixel_type="RGB32")
+    WhiteBar = BlankClip(BlackBar, color=$FFFFFF)
+    BWmask = (Mode=="LeftToRight" || Mode=="RightToLeft")
+    \   ? StackHorizontal(BlackBar, WhiteBar) 
+    \   : StackVertical  (BlackBar, WhiteBar) 
+    BWmask = BWmask.Animate(0, frms+1, "GaussResize",
+    \       wid, hgt, startX1, startY1, x2, y2, HardnessStart,
+    \       wid, hgt, endX1,   endY1,   x2, y2, HardnessEnd
+    \ ).Trim(1, frms)
+
+    ## Glue it together
+    Trim(A, 0, FrameCount(A)-frms-1)
+    (frms > 0 )
+    \   ? Last + Overlay(ClipLeft, ClipRight, mask=BWmask, pc_range=True) 
+    \             [*  .Subtitle("win_w="+String(win_w)+"; win_h="+String(win_h)) *]
+    \   : Last
+    
+    Last + Trim(B, frms, 0)
+    HasAudio(AudioMix) 
+    \   ? AudioDub(last, AudioMix) 
+    \   : last
+}
+
+#######################################################################################
 # http://forum.doom9.org/showthread.php?p=1671928#post1671928
 #include "E:\Data\VideoAuxdata\test\White Balance\white-bal.avs"
 # C:\Users\raff4\Dropbox\Public\Screenshots\mt_lut_calc_2.ods
@@ -3628,12 +3889,14 @@ function rainbow_border(clip C, int "modx", int "mody")
 }
 
 ##################################
-### colorbars with HSL (not NTSC) colors designed to be stacked over clip 'C'; no audio
+### colorbars with HSL (not NTSC) colors; no audio
 ##
 ## @ C      - Any color format supported by [[BlankClip]];
 ##            determines all properties except height. 
-## @ height - default 40; minimum 8; if 'ontop'==true, bottom 4 lines are black
+## @ height - default = 8 if ontop=true, else default = C.Height; 
+##            if 0, height will be 8 if ontop, else C.Height
 ## @ ontop  - if true (default), stack on top of clip 'C' with audio from 'C'
+##            bottom 4 lines are black to create a border between bars and content
 ## @ inset  - if true and 'ontop'==true, crop 'C' so height is unchanged; default false
 ## @ label  - if true, show a label with 0_255 color values; default false
 ##            (height must be >= 20 to show labels)
@@ -3644,7 +3907,8 @@ function MiniBars(clip C, int "height", bool "ontop", bool "inset", bool "label"
     \   "MiniBars: clip 'C' must be at least 32 pixels wide")
     top  = Default(ontop, false)
     inst = Default(inset, false)
-    hgt  = Default(height, 40)  
+    hgt  = Default(height, 0)
+    hgt  = (hgt>0) ? hgt : (top) ? 8 : C.Height
     hgt  = Max(8, modx(2, hgt))
     hgt  = hgt - (top ? 4 : 0)
     lbl  = Default(label, false)
