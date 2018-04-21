@@ -34,12 +34,12 @@
 ## v2017-12-26 To601, To709
 ## v2018-01-11 ColorRampY
 ## v2018-01-26 bugfix; AnalyzeFmt
-## v2018-02-06 CropLRTB, CropLTWH
+## v2018-02-06 CropLTRB, CropLTWH
 ## v2018-02-12 _getFullscale and BitsToPixelType bugfixes
 ## v2018-02-20 Levelsc; To601, To709, MatrixRed, MatrixGreen
 ## v2018-02-22 MakeRGBColor, YUV2GBR, GBR2YUV bugfixes; remove AddGrain
 ## v2018-02-23 (float support needs more testing)
-## v2018-02-24 enhance CropLRTB, CropLTWH, AnalyzeFmt; refine ToPC, ToTV; Subtitle42
+## v2018-02-24 enhance CropLTRB, CropLTWH, AnalyzeFmt; refine ToPC, ToTV; Subtitle42
 ## v2018-02-25 To444/To422/To420 - don't return YUVA by default (it confuses clients)
 ## v2018-02-26 use Expr to replace MaskTools
 ## v2018-02-27 ShowSnippet; ColorRamp replaces ColorRampR/ColorRampY
@@ -53,6 +53,7 @@
 ## v2018-04-14 (moved from -r42) Shift, ShiftUV, ShiftRedBlue
 ## v2018-04-15 (moved from -r42) GammaCurve, AntigammaCurve, MergeLMH
 ## v2018-04-16 (return to -r42) SoftWipe, ChangeSpeed, ChangeAudioSpeed
+## v2018-04-20 To400; bugfix
 
 global R41_HISTX = 264 ## amount classic Histogram adds to clip width (with added borders)
 global R41_BITMAX = 16 ## max implicit bit depth (float temp. disabled pending more tests)
@@ -169,6 +170,9 @@ global R41_BITMAX = 16 ## max implicit bit depth (float temp. disabled pending m
 
     ### Convert from anything to YUV(A)420
     #@ function To420(clip C, string "matrix", int "bits_out", val "alpha")
+
+    ### Convert from anything to Y-only
+    #@ function To400(clip C, string "matrix", int "bits_out")
 
     ### Convert from anything to YUV(A)xxx (444|422|420|400)
     #@ function _ToYUVx(clip C, int chroma, string "matrix", int "bits_out", val "alpha")
@@ -434,12 +438,12 @@ global R41_BITMAX = 16 ## max implicit bit depth (float temp. disabled pending m
 
     ### Classic [[Histogram]], waveform on top (or on bottom); supports RGB
     ### many little enhancements; accepts both YUV & RGB
-    #@ function HistogramTurn(clip C, bool "parade", bool "shrink", bool "bottom")
+    #@ function HistogramTurn(clip C, bool "parade", bool "shrink", bool "bottom", bool "turn")
 
     ### show video waveform + vectorscope; many little enhancements; accepts both YUV & RGB
     #@ function ScopeR(clip C, bool "shrink", bool "vector", string "matrix", 
     ##\               bool "parade", bool "bottom", string "mode", 
-    ##\               bool "labels", int "marks", bool "audio")
+    ##\               bool "labels", int "marks", bool "audio", bool "turn")
 
     ### Augmented [[Histogram]]; reduce or eliminate high, low and center highlighting;
     #@ function _Hist2(clip C, string "mode", float "factor", int "tvrange_offset", bool "keepsource")
@@ -1131,6 +1135,22 @@ function To420(clip C, string "matrix", int "bits_out", val "alpha")
     Assert(IsClip(C) && C.Width%2==0 && C.Height%2==0,
     \   "To420: source width or height not modulo-2")
     return C._ToYUVx(420, matrix, bits_out, alpha)
+}
+
+##################################
+### Convert from anything to Y-only
+##  * Process internally at the next higher bit depth.
+##
+## @ matrix   - ignored if not converting from RGB; default "Rec601"
+## @ bits_out - output bit depth, one of (8|10|12|14|16|32); default same as source
+##
+## Return YUV(A)420
+##
+function To400(clip C, string "matrix", int "bits_out")
+{
+    Assert(IsClip(C) && C.Width%2==0 && C.Height%2==0,
+    \   "To400: source width or height not modulo-2")
+    return C._ToYUVx(400, matrix, bits_out, "none")
 }
 
 ##################################
@@ -3552,6 +3572,8 @@ function CropEx(clip C, float wid, float hgt, int "mod",
 ##################################
 ### CropEx helper: borders with repeated edge pixels
 ##
+## @ left, top, right, bottom - size of borders to be added
+##
 function Padding(clip C, int left, int top, int right, int bottom)
 {
     left   = Max(0, left)
@@ -3570,6 +3592,8 @@ function Padding(clip C, int left, int top, int right, int bottom)
 # http://forum.doom9.org/showthread.php?p=1739635#post1739635
 ##################################
 ### CropEx helper: borders with mirrored edge pixels
+##
+## @ left, top, right, bottom - size of borders to be added
 ##
 function MirrorBorders(clip C, int left, int top, int right, int bottom)
 {
@@ -3608,8 +3632,11 @@ function MirrorBorders(clip C, int left, int top, int right, int bottom)
 
 # https://forum.doom9.org/showthread.php?p=1807908#post1807908
 ##################################
-### CropEx helper: soft, dark, fuzzy borders
+### CropEx helper: soft, dark borders
 ##
+## @ left, top, right, bottom - size of borders to be added
+##
+## -- A D V A N C E D   A R G U M E N T S -----------------------------------
 ## @ gain   - brightness of pillarbox portion; 
 ##              range 0.2_2.0; default 0.9 (slightly darker)
 ##              (bypass / substitute plain black borders if gain < 0.1)
@@ -3617,18 +3644,17 @@ function MirrorBorders(clip C, int left, int top, int right, int bottom)
 ##              range 0.0_2.0; default 0.6 (60%)
 ## @ blue   - blue shift of pillarbox portion; 
 ##              range -32_32; default 0 (none; 2=subtle)
-## @ noise - (removed)
 ## @ pblur  - amount of pillarbox blur; 
 ##              range 0_200; default 100 (strong)
 ## @ tblur  - radius of temporal blur; 
 ##              range 0_9; default 0 (off)
 ## @ scene - pillarbox temporal blur scene change threshold
 ##              range 0_255; default 32
-## @ version 2.1
+## @ version 2.1.1
 ##
 function BlurBorders(clip C, int left, int top, int right, int bottom, 
 \                    float "gain", float "sat", int "blue",
-\                    float "noise", int "pblur", int "tblur", int "scene")
+\                    int "pblur", int "tblur", int "scene")
 {
     Assert(!C.IsYV411, 
     \  "BlurBorders: YV411 not accepted") ## (cf. Overlay)
@@ -3640,7 +3666,6 @@ function BlurBorders(clip C, int left, int top, int right, int bottom,
     sat   = Min(Max(0.0,  Default(sat,   0.6 )), 2.0)
     blue  = Min(Max(-32,  Default(blue,  0   )), 32)
     blur  = Min(Max(0,    Default(pblur, 100 )), 200)
-    #noise = Min(Max(0,    Default(noise, 3   )), 50)
     tblur = Min(Max(0,    Default(tblur, 0   )), 9)
     scene = Min(Max(0,    Default(scene, 32  )), 255)
 
@@ -3656,16 +3681,9 @@ function BlurBorders(clip C, int left, int top, int right, int bottom,
     ## p=19: softest w/o visible 'blockiness' 
 
     ## DARKEN, DESATURATE
-    C.IsRGB ? ConvertToYUV444 : Last
+    (C.IsRGB) ? ConvertToYUV444 : Last
     ColorYUV(gain_y=f2c(gain), off_u=blue, cont_u=f2c(sat), cont_v=f2c(sat))
-    C.IsRGB ? MatchColorFormat(C) : Last
-
-    [*
-    ## ADD FIXED NOISE ('FROSTED GLASS') 
-    ## (enough to hide any banding from mega-blur)
-    (noise==0) ? Last 
-    \ : AddGrainAG(Round(noise*50), Round(noise*50), fixed=true)
-    *]
+    (C.IsRGB) ? MatchColorFormat(C) : Last
 
     return Last.Overlay(C, x=left, y=top)
 } 
@@ -4135,11 +4153,11 @@ function ColorRampEx(clip T, int "left_color", int "right_color", int "height",
     ## HACK "Last.Height" because "Height" is arg name
     (top) ? StackVertical(
     \       Last.CropEx(TR.Width, Last.Height, mod=1), 
-    \       (inst) ? TR.CropLRTB(0, 0, hgt, 0) : TR
+    \       (inst) ? TR.CropLTRB(0, hgt, 0, 0) : TR
     \ ) 
     \ : (side) ? StackVertical(
     \       Last.CropEx(TR.Width, Last.Height, mod=1), 
-    \       (inst) ? TR.CropLRTB(0, 0, hgt, 0) : TR
+    \       (inst) ? TR.CropLTRB(0, hgt, 0, 0) : TR
     \ ) 
     \ : Last
     (side) ? TurnRight : Last
@@ -4212,7 +4230,6 @@ function Vector2(clip C, string "mode", string "matrix", bool "bottom",
     \    : Assert(false,
     \        "Vector2: invalid 'mode' argument")
 
-    #BilinearResize(Height, Height)
     PointResize(Height, Height)
 
     FlipVertical
@@ -4376,7 +4393,7 @@ function vector_marks(clip T, int "bits", int "style")
     \      : 256
     sc     = Float(dims) / 256  ## scale factor
     sz     = 16 * sc            ## base font size
-    szb    = 3*sz               ## bigger font size
+    szb    = 3  * sz            ## bigger font size
 
     ## colors optimized for use with example in description
     fg = $bfbfbf
@@ -4432,16 +4449,18 @@ function vector_marks(clip T, int "bits", int "style")
 ## @ shrink - if true, shrink clip+waveform & add side borders so output size = input
 ##            if false (default), height increases by R41_HISTX px 
 ## @ bottom - if true, put histogram below video (default false)
+## @ turn   - if true (default), turn histogram 90 deg left
 ##
-function HistogramTurn(clip C, bool "parade", bool "shrink", bool "bottom")
+function HistogramTurn(clip C, bool "parade", bool "shrink", bool "bottom", bool "turn")
 {
     Assert(C.Height>=260,
     \   "HistogramTurn: source clip minimum height = 260")
-    parade  = Default(parade, true)
-    shrink  = Default(shrink, false)
-    bottom  = Default(bottom, false)
+    parade = Default(parade, true)
+    shrink = Default(shrink, false)
+    bottom = Default(bottom, false)
+    turn   = Default(turn, true)
 
-    return C.ScopeR(shrink=shrink, vector=false, parade=parade, bottom=bottom)   
+    return C.ScopeR(shrink=shrink, vector=false, parade=parade, bottom=bottom, turn=turn)   
 }
 
 # fka VideoScopes
@@ -4458,19 +4477,20 @@ function HistogramTurn(clip C, bool "parade", bool "shrink", bool "bottom")
 ##            otherwise 'matrix' is ignored (does not affect waveform or main image)
 ## @ parade - if true, show RGB waveforms side-by-side;
 ##            else (default), show RGB waveforms superimposed
-## @ bottom - if true, put scopes below video (default false)
+## @ bottom - if true and 'turn'==true, put scopes below video (default false)
 ## @ mode   - vectorscope mode, "color" or "color2"; default "color"
 ## @ labels - if true (default), add axis labels
 ## @ marks  - color bar reference mark (graticule) layout: 
 ##            0=none (default); 1=ColorBars/601; 2=ColorBars/709; 3=ColorbarsHD
 ## @ audio  - if true, add audio levels and lissajous meters
+## @ turn   - if true (default), turn histogram 90 deg left
 ##
 ## version 2017-05-09 support RGB, deep color
 ## version 2017-05-18 matrix argument
 ##
 function ScopeR(clip C, bool "shrink", bool "vector", string "matrix", 
 \               bool "parade", bool "bottom", string "mode", 
-\               bool "labels", int "marks", bool "audio")
+\               bool "labels", int "marks", bool "audio", bool "turn")
 {
     Assert(C.Height>=260,
     \   "ScopeR: source clip minimum height = 260")
@@ -4483,6 +4503,7 @@ function ScopeR(clip C, bool "shrink", bool "vector", string "matrix",
     labels = Default(labels, true)
     marks  = Default(marks, 0)
     audio  = Default(audio, false)
+    turn   = Default(turn, true)
 
     Assert(shrink==false || (C.Width>=360 && C.Height>=360), 
     \   "ScopeR: source must be at least 360x360 for shrink mode") 
@@ -4501,27 +4522,38 @@ function ScopeR(clip C, bool "shrink", bool "vector", string "matrix",
 
     R = (bits==8)
     \ ? (C.IsRGB) 
-    \   ? C.KillAudio.TurnRight
+    \   ? C.KillAudio
+    \      ._TurnRightIf(turn)
     \      ._HistRGB(parade)
     \      .Levels(24, 2.5, 235, 0, 255, coring=false)
-    \      .TurnLeft.MatchColorFormat(C)
-    \   : C.KillAudio.TurnRight
+    \      ._TurnLeftIf(turn)
+    \      .MatchColorFormat(C)
+    \   : C.KillAudio
+    \      ._TurnRightIf(turn)
     \      ._Hist2
     \      .Levels(24, 2.5, 235, 0, 255, coring=false)
-    \      .TurnLeft
+    \      ._TurnLeftIf(turn)
     \ : (C.IsRGB) 
-    \   ? C.KillAudio.ConvertBits42(8, dither=dth).TurnRight
+    \   ? C.KillAudio
+    \      .ConvertBits42(8, dither=dth)
+    \      ._TurnRightIf(turn)
     \      ._HistRGB(parade)
     \      .Levelss(24, 2.5, 235, 0, 255, coring=false)
-    \      .TurnLeft.ConvertBits42(bits).MatchColorFormat(C) 
-    \   : C.KillAudio.ConvertBits42(8, dither=dth).TurnRight
+    \      ._TurnLeftIf(turn)
+    \      .ConvertBits42(bits).MatchColorFormat(C) 
+    \   : C.KillAudio
+    \      .ConvertBits42(8, dither=dth)
+    \      ._TurnRightIf(turn)
     \      ._Hist2
     \      .Levelss(24, 2.5, 235, 0, 255, coring=false)
-    \      .TurnLeft.ConvertBits42(bits)
+    \      ._TurnLeftIf(turn)
+    \      .ConvertBits42(bits)
 
-    R = (bottom) 
-    \ ? StackVertical(C, R)
-    \ : StackVertical(R, C)
+    R = (turn)
+    \ ? (bottom) 
+    \    ? StackVertical(C, R)
+    \    : StackVertical(R, C)
+    \ : StackHorizontal(C, R)
 
     V = (vector)
     \ ? C.Vector2(mode, matrix, labels=labels, marks=marks, audio=audio)
@@ -4540,6 +4572,17 @@ function ScopeR(clip C, bool "shrink", bool "vector", string "matrix",
     return (C.HasAudio)
     \ ? R.AudioDub(C) 
     \ : R
+
+    ###################################
+    function _TurnLeftIf(clip C, bool b)
+    {
+        return (b) ? C.TurnLeft : C
+    }
+    ###################################
+    function _TurnRightIf(clip C, bool b)
+    {
+        return (b) ? C.TurnRight : C
+    }
 
 }
 
