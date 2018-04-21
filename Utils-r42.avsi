@@ -9,7 +9,7 @@
 ## v2018-04-14 (removed) Shift, ShiftUV, ShiftRedBlue
 ## v2018-04-15 (removed) GammaCurve, AntigammaCurve, MergeLMH
 ## v2018-04-16 (returned) SoftWipe, ChangeSpeed, ChangeAudioSpeed
-
+## v2018-04-20 CRTfx2 (WIP), FastGlow2
 
 ## download latest:
 ##   https://raw.githubusercontent.com/raffriff42/AvisynthPlusUtilities/master/Utils-r42.avsi
@@ -310,6 +310,10 @@ global giUUTrim = 0
     #@ function AddGrainAG(clip C, int yn, int "cn", bool "fixed", float "hcorr", float "vcorr")
 
     #@ function watermark42(clip C, clip M, float opacity, bool "nofill")
+
+    #@ function CRTfx2(clip C, float "blend", int "grid", float "gain", int "rboffset")
+    
+    #@ function FastGlow2(clip C, int "radius", int "min", int "max") 
 
 ### AUDIO FILTERS 
 
@@ -2935,7 +2939,7 @@ function MultiSharpen(clip C, int multi, float "sharpen", float "blur")
 ##  | SuperSexyWidescreen(2560, 1080) ## expand to true 21:9 (21.3333:9)
 ##  | SuperSexyWidescreen(Width+32, Height) ## expand to explicit width
 ##
-## -- A D V N C E D   A R G U M E N T S -----------------------------------
+## -- A D V A N C E D   A R G U M E N T S -----------------------------------
 ## @ gain  - brightness of pillarbox portion; 
 ##              range 0.2_2.0; default 0.9 (slightly darker)
 ## @ sat   - saturation of pillarbox portion; 
@@ -3617,6 +3621,156 @@ function watermark42(clip C, clip M, float opacity, bool "nofill")
     }
 }
 
+#Import(pathBase + "PointSize\PointSize_loadx64.avsi")
+/*
+##################################
+### create a CRT-like effect from old-school video game footage
+##
+## @ C        - RGB32
+## @ wid, hgt - output size; must be at least 2x input size; preferably 4x
+##              (integer multiple of source not required)
+## @ blend    - amount of dark grid overlay; default 0.10 (1%)
+## @ grid     - size of black grid pattern; default 2 (0 == no grid)
+## @ gain     - make-up gain following grid darkening; default auto
+## @ rboffset - amount to red & blue divergence in pixels; default 2
+## @ bloom    - amount of highlight 'bloom' or spread
+##
+function PointsizeCRT(clip C, int wid, int hgt, float "blend", 
+\               int "grid", float "gain", int "rboffset", float "bloom")
+{
+    Assert(C.IsRGB,
+    \   "CRTfx2: RGB source required")
+    Assert((wid % 4)==0 && (hgt % 4)==0,
+    \   "CRTfx2: output 'wid' & 'hgt' must be mod 4")
+    Assert(C.Width<=wid/2 && C.Height<=hgt/2,
+    \   "CRTfx2: output 'wid' & 'hgt' must be at least 2x source width & height")
+
+    blend    = Min(Max(0.0, Default(blend, 0.1)), 1.0)
+    bloom    = Min(Max(0.0, Default(bloom, 0.0)), 1.0)
+
+    rboffset =     Max(0,   Default(rboffset, 2))
+    grid     =     Max(0,   Default(grid,     2))
+    gain     =     Max(0.0, Default(gain,     1.0 + (2.0 * blend)))
+
+    ## G = grid
+    G = (grid==0) ? C
+    \ : C.ConvertToYV24
+    \    .BicubicResize(wid, hgt)
+    \    .gridmask_square(grid)
+    \    .Trim(0, length=1)
+    \    .ConvertToRGB32
+    \    .Loop(C.FrameCount)
+
+    ## P = PointSize
+    den = (grid<=1) ? 2 : 4
+    P = C.xBRZ(2)
+    \    .GaussResize(wid/den, hgt/den, p=70)
+    \    .PointResize(wid, hgt)
+    
+    P = (rboffset==0) ? B
+    \ : P.ShiftRedBlue( rx=(-rboffset), bx=(+rboffset) )
+    
+    ## R = return value
+    R = (grid==0 || blend<0.001) ? P
+    \ : P.Overlay(G, mode="darken", opacity=blend)
+    
+    R = (Abs(1.0-gain)<0.001) ? R
+    \ : R.RGBAdjust(gain, gain, gain)
+
+    B = (bloom<=0.001) ? R
+    \ : R.FastGlow2
+
+    R = (bloom<=0.001) ? R
+    \ : R.Overlay(B, opacity=bloom)
+    return R
+}
+*/
+
+## https://forum.doom9.org/showthread.php?p=1839821#post1839821
+##################################
+### create a CRT-like effect from old-school video game footage
+##
+## @ C        - RGB32
+## @ blend    - amount of dark grid overlay; default 0.10 (1%)
+## @ grid     - size of black grid pattern; default 1 (0 == no grid)
+## @ gain     - make-up gain following grid darkening; default auto
+## @ rboffset - amount to red & blue divergence in pixels; default 1
+## @ bloom    - amount of highlight 'bloom' or spread
+##
+function CRTfx2(clip C, float "blend", int "grid", float "gain", int "rboffset")
+{
+    Assert(C.IsRGB,
+    \   "CRTfx2: RGB source required")
+
+    blend    = Min(Max(0.0, Default(blend, 0.1)), 1.0)
+
+    rboffset = Max( 0 , Default(rboffset, 1))
+    grid     = Max( 0 , Default(grid,     1))
+    gain     = Max(0.0, Default(gain,     1.0 + (0.5 * blend)))
+
+    ## R, B offset
+    R = (rboffset==0) ? C
+    \ : C.ShiftRedBlue( rx=(-rboffset), bx=(+rboffset) )
+    
+    ## grid
+    G = (grid==0) ? C
+    \ : C.ConvertToYV24
+    \    ._gridmask_square(grid)
+    \    .ConvertToRGB32
+    \    .Trim(0, length=1)
+    \    .Loop(C.FrameCount)
+    R = (grid==0 || blend<0.001) ? R
+    \ : R.Overlay(G, mode="darken", opacity=blend)
+    
+    ## gain
+    R = (Abs(1.0-gain)<0.001) ? R
+    \ : R.RGBAdjust(gain, gain, gain)
+    return R
+
+    function _gridmask_square(clip C, int size)
+    {
+        C
+        return mt_logic(
+        \   mt_lutspa(mode="absolute", chroma="-128",
+        \             expr="x "+String(size)+" / pi * cos 108 * 126 + "),
+        \   mt_lutspa(mode="absolute", chroma="-128",
+        \             expr="y "+String(size)+" / pi * cos 108 * 126 + "),
+        \  "andn")
+    }
+}
+
+## thanx MJLives12
+## http://forum.doom9.org/showthread.php?p=1622849#post1622849
+##################################
+### simple & fast bloom effect on highlights
+##
+## @ C      - YUV, TV range assumed; other formats MAY work
+## @ radius - amount of spread; default auto (aprox. 10~20)
+## @ min    - luminance level first affected by bloom; default 230d
+## @ max    - luminance level with full bloom; default (min + 5)
+## @ color  - bloom color; default white
+##
+function FastGlow2(clip C, int "radius", int "min", int "max", int "color") 
+{
+    defrad = Round(0.01 * (C.Width + C.Height))
+    radius =     Max(1,      Default(radius,   defrad))
+    imin   = Min(Max(64,     Default(min,    230)), 250)
+    imax   = Min(Max(imin+1, Default(max, imin+5)), 255)
+    edges  = ((radius % 4)==0) 
+    \      ? radius 
+    \      : radius + 4 - (radius % 4)
+    color  = Default(color, $ffffff)
+
+    M = C.ConvertToY
+    \    .Levelss(imin, 1.0, imax, 0, 255)
+    \    .AddBorders(edges, edges, edges, edges)
+    \    .QGaussBlur(radius)
+    \    .CropLTRB(edges, edges, edges, edges)
+    \    .Levelss(16, 1.0, 127, 0, 255, coring=false) ## (w/ TV->PC)
+
+    return Overlay(C, Blankclip(C, color=color), mask=M) 
+}
+
 #######################################################################################
 ### AUDIO FILTERS 
 #######################################################################################
@@ -3833,13 +3987,13 @@ function stripe_border(clip C, int stripecount,
         return C
     } 
     
-    ## "safe" CropLRTB
+    ## "safe" CropLTRB
     cnt2 = cnt
     success = true
     CC = C
     while (ins && success && (cnt2 > 0)) {
         try {
-            CC = CC.CropLRTB(2*modx, 2*mody, 2*modx, 2*mody)
+            CC = CC.CropLTRB(2*modx, 2*mody, 2*modx, 2*mody)
 #            \ .Subtitle(String(cnt2), y=CC.Height-((cnt2+1)*24))
         } catch (err_msg) {
             success = false
